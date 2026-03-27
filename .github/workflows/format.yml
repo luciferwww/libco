@@ -1,0 +1,33 @@
+name: Code Format Check
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  format-check:
+    name: clang-format Check
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format-14
+          sudo update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-14 100
+      
+      - name: Check code format
+        run: |
+          chmod +x tools/format.sh
+          ./tools/format.sh --check
+      
+      - name: Upload format report
+        if: failure()
+        run: |
+          echo "Code format check failed!"
+          echo "Please run './tools/format.sh' locally to fix formatting issues."
