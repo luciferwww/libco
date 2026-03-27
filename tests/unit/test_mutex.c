@@ -1,6 +1,6 @@
 /**
  * @file test_mutex.c
- * @brief 协程互斥锁单元测试
+ * @brief Coroutine mutex unit tests
  */
 
 #include "unity.h"
@@ -10,7 +10,7 @@
 #include <string.h>
 
 // ============================================================================
-// 测试辅助
+// Test helpers
 // ============================================================================
 
 static int g_counter = 0;
@@ -26,7 +26,7 @@ void setUp(void) {
 void tearDown(void) {}
 
 // ============================================================================
-// 测试：基本加锁/解锁
+// Test: basic lock/unlock
 // ============================================================================
 
 typedef struct {
@@ -37,9 +37,9 @@ typedef struct {
 static void coroutine_lock_unlock(void *arg) {
     mutex_arg_t *a = (mutex_arg_t *)arg;
     co_mutex_lock(a->mutex);
-    g_order[g_order_idx++] = a->id;  // 记录进入临界区的顺序
+    g_order[g_order_idx++] = a->id;  // Record critical-section entry order
     g_counter++;
-    co_yield();                        // 持锁让出，验证其他协程被阻塞
+    co_yield();                        // Yield while holding the lock to ensure others block
     g_counter++;
     co_mutex_unlock(a->mutex);
 }
@@ -56,7 +56,7 @@ void test_mutex_basic_lock_unlock(void) {
 
     co_scheduler_run(sched);
 
-    // 每个协程在临界区执行两次 ++，共 4 次
+    // Each coroutine increments twice in the critical section, for a total of 4
     TEST_ASSERT_EQUAL_INT(4, g_counter);
 
     co_mutex_destroy(mutex);
@@ -64,7 +64,7 @@ void test_mutex_basic_lock_unlock(void) {
 }
 
 // ============================================================================
-// 测试：FIFO 等待顺序
+// Test: FIFO wait order
 // ============================================================================
 
 static void coroutine_fifo(void *arg) {
@@ -78,7 +78,7 @@ void test_mutex_fifo_order(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
     co_mutex_t *mutex = co_mutex_create(NULL);
 
-    // 先手动锁住，spawn 三个协程，它们会按顺序排队
+    // Lock manually first, then spawn three coroutines so they queue in order
     co_mutex_lock(mutex);
 
     mutex_arg_t a1 = {mutex, 1};
@@ -93,7 +93,7 @@ void test_mutex_fifo_order(void) {
 
     co_scheduler_run(sched);
 
-    // 应按创建顺序 1->2->3 进入临界区
+    // They should enter the critical section in creation order: 1->2->3
     TEST_ASSERT_EQUAL_INT(1, g_order[0]);
     TEST_ASSERT_EQUAL_INT(2, g_order[1]);
     TEST_ASSERT_EQUAL_INT(3, g_order[2]);
@@ -103,23 +103,23 @@ void test_mutex_fifo_order(void) {
 }
 
 // ============================================================================
-// 测试：trylock
+// Test: trylock
 // ============================================================================
 
 void test_mutex_trylock(void) {
     co_mutex_t *mutex = co_mutex_create(NULL);
 
-    // 第一次 trylock 应成功
+    // The first trylock should succeed
     co_error_t ret = co_mutex_trylock(mutex);
     TEST_ASSERT_EQUAL_INT(CO_OK, ret);
 
-    // 锁被持有，再次 trylock 应返回 CO_ERROR_BUSY
+    // Once the lock is held, trylock should return CO_ERROR_BUSY
     ret = co_mutex_trylock(mutex);
     TEST_ASSERT_EQUAL_INT(CO_ERROR_BUSY, ret);
 
     co_mutex_unlock(mutex);
 
-    // 解锁后应可再次 trylock
+    // After unlocking, trylock should succeed again
     ret = co_mutex_trylock(mutex);
     TEST_ASSERT_EQUAL_INT(CO_OK, ret);
 
@@ -128,7 +128,7 @@ void test_mutex_trylock(void) {
 }
 
 // ============================================================================
-// 测试：临界区互斥
+// Test: critical-section mutual exclusion
 // ============================================================================
 
 static co_mutex_t *g_shared_mutex = NULL;
@@ -139,7 +139,7 @@ static void coroutine_critical_section(void *arg) {
     for (int i = 0; i < iters; i++) {
         co_mutex_lock(g_shared_mutex);
         int tmp = g_shared_value;
-        co_yield();          // 临界区内让出，验证其他协程不能同时修改
+        co_yield();          // Yield inside the critical section to verify mutual exclusion
         g_shared_value = tmp + 1;
         co_mutex_unlock(g_shared_mutex);
     }
@@ -156,8 +156,8 @@ void test_mutex_protects_critical_section(void) {
 
     co_scheduler_run(sched);
 
-    // 两个协程各执行 5 次 +1，总计 10
-    // 如果临界区保护失效（出现 ABA 问题），结果会 < 10
+    // Two coroutines each perform five increments, for a total of 10.
+    // If critical-section protection fails, the final value would be < 10.
     TEST_ASSERT_EQUAL_INT(10, g_shared_value);
 
     co_mutex_destroy(g_shared_mutex);
@@ -166,7 +166,7 @@ void test_mutex_protects_critical_section(void) {
 }
 
 // ============================================================================
-// 测试入口
+// Test entry
 // ============================================================================
 
 int main(void) {

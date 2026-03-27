@@ -1,6 +1,6 @@
 /**
  * @file scheduler.hpp
- * @brief co::Scheduler and co::Task — C++17 RAII wrappers for the libco scheduler.
+ * @brief co::Scheduler and co::Task - C++17 RAII wrappers for the libco scheduler.
  *
  * All co:: objects must be used within the same scheduler thread.
  * They do NOT protect against multi-threaded access; they synchronize
@@ -18,7 +18,7 @@
 namespace co {
 
 // ============================================================================
-// TaskSharedState — internal completion token shared between Task and trampoline
+// TaskSharedState - internal completion token shared between Task and trampoline
 // ============================================================================
 
 /**
@@ -128,7 +128,7 @@ struct Wrapper : WrapperBase {
     void run() override { fn(); }
 };
 
-/// Non-template trampoline — defined in scheduler.cpp.
+/// Non-template trampoline - defined in scheduler.cpp.
 /// Invokes WrapperBase::run(), captures exceptions, signals completion.
 void trampoline(void* arg) noexcept;
 
@@ -178,7 +178,7 @@ private:
     co_scheduler_t* sched_;
 };
 
-// ── Scheduler::spawn (template, must stay in header) ─────────────────────────
+// Scheduler::spawn (template, must stay in header)
 
 template<typename F>
 Task Scheduler::spawn(F&& fn, size_t stack_size) {

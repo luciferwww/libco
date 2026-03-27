@@ -1,6 +1,6 @@
 /**
  * @file test_cond.c
- * @brief 协程条件变量单元测试
+ * @brief Coroutine condition variable unit tests
  */
 
 #include "unity.h"
@@ -10,7 +10,7 @@
 #include <string.h>
 
 // ============================================================================
-// 测试辅助
+// Test helpers
 // ============================================================================
 
 static int g_order[16];
@@ -24,7 +24,7 @@ void setUp(void) {
 void tearDown(void) {}
 
 // ============================================================================
-// 测试：signal 唤醒单个等待者
+// Test: signal wakes one waiter
 // ============================================================================
 
 typedef struct {
@@ -37,15 +37,15 @@ static void coroutine_waiter(void *arg) {
     cond_arg_t *a = (cond_arg_t *)arg;
     co_mutex_lock(a->mutex);
     while (*(a->flag) == 0) {
-        co_cond_wait(a->cond, a->mutex);  // 释放锁并挂起
+        co_cond_wait(a->cond, a->mutex);  // Release the lock and suspend
     }
-    g_order[g_order_idx++] = 1;           // 被唤醒
+    g_order[g_order_idx++] = 1;           // Resumed
     co_mutex_unlock(a->mutex);
 }
 
 static void coroutine_signaler(void *arg) {
     cond_arg_t *a = (cond_arg_t *)arg;
-    co_yield();                            // 先让 waiter 阻塞
+    co_yield();                            // Let the waiter block first
 
     co_mutex_lock(a->mutex);
     *(a->flag) = 1;
@@ -66,7 +66,7 @@ void test_cond_signal_wakes_one(void) {
 
     co_scheduler_run(sched);
 
-    TEST_ASSERT_EQUAL_INT(1, g_order_idx);   // waiter 被唤醒一次
+    TEST_ASSERT_EQUAL_INT(1, g_order_idx);   // The waiter should wake exactly once
     TEST_ASSERT_EQUAL_INT(1, g_order[0]);
 
     co_cond_destroy(cond);
@@ -75,7 +75,7 @@ void test_cond_signal_wakes_one(void) {
 }
 
 // ============================================================================
-// 测试：broadcast 唤醒多个等待者
+// Test: broadcast wakes multiple waiters
 // ============================================================================
 
 static void coroutine_waiter_multi(void *arg) {
@@ -91,7 +91,7 @@ static void coroutine_waiter_multi(void *arg) {
 static void coroutine_broadcaster(void *arg) {
     cond_arg_t *a = (cond_arg_t *)arg;
     co_yield();
-    co_yield();   // 等两个 waiter 都挂起
+    co_yield();   // Wait until both waiters are suspended
 
     co_mutex_lock(a->mutex);
     *(a->flag) = 1;
@@ -113,7 +113,7 @@ void test_cond_broadcast_wakes_all(void) {
 
     co_scheduler_run(sched);
 
-    TEST_ASSERT_EQUAL_INT(2, g_order_idx);  // 两个 waiter 都被唤醒
+    TEST_ASSERT_EQUAL_INT(2, g_order_idx);  // Both waiters should be resumed
 
     co_cond_destroy(cond);
     co_mutex_destroy(mutex);
@@ -121,18 +121,18 @@ void test_cond_broadcast_wakes_all(void) {
 }
 
 // ============================================================================
-// 测试：signal 无等待者时不崩溃
+// Test: signal is safe when there are no waiters
 // ============================================================================
 
 void test_cond_signal_no_waiter(void) {
     co_cond_t *cond = co_cond_create(NULL);
-    TEST_ASSERT_EQUAL_INT(CO_OK, co_cond_signal(cond));   // 应静默返回
+    TEST_ASSERT_EQUAL_INT(CO_OK, co_cond_signal(cond));   // Should return quietly
     TEST_ASSERT_EQUAL_INT(CO_OK, co_cond_broadcast(cond));
     co_cond_destroy(cond);
 }
 
 // ============================================================================
-// 测试：timedwait 超时后返回 CO_ERROR_TIMEOUT
+// Test: timedwait returns CO_ERROR_TIMEOUT after timing out
 // ============================================================================
 
 typedef struct {
@@ -144,7 +144,7 @@ typedef struct {
 static void coroutine_timedwait_timeout(void *arg) {
     timedwait_arg_t *a = (timedwait_arg_t *)arg;
     co_mutex_lock(a->mutex);
-    // 等待 50ms，没有人会 signal，预期超时
+    // Wait 50 ms with no signaler; timeout is expected
     a->result = co_cond_timedwait(a->cond, a->mutex, 50);
     co_mutex_unlock(a->mutex);
 }
@@ -166,7 +166,7 @@ void test_cond_timedwait_timeout(void) {
 }
 
 // ============================================================================
-// 测试：timedwait 在超时前被 signal，返回 CO_OK
+// Test: timedwait is signaled before timeout and returns CO_OK
 // ============================================================================
 
 typedef struct {
@@ -179,7 +179,7 @@ typedef struct {
 static void coroutine_timedwait_waiter(void *arg) {
     timedwait_signal_arg_t *a = (timedwait_signal_arg_t *)arg;
     co_mutex_lock(a->mutex);
-    // 等待最多 500ms，但 signaler 会在短时间内唤醒它
+    // Wait up to 500 ms, but the signaler should wake it much sooner
     a->result = co_cond_timedwait(a->cond, a->mutex, 500);
     a->signaled = 1;
     co_mutex_unlock(a->mutex);
@@ -187,7 +187,7 @@ static void coroutine_timedwait_waiter(void *arg) {
 
 static void coroutine_timedwait_signaler(void *arg) {
     timedwait_signal_arg_t *a = (timedwait_signal_arg_t *)arg;
-    co_sleep(10);  // 短暂休眠后 signal
+    co_sleep(10);  // Sleep briefly before signaling
 
     co_mutex_lock(a->mutex);
     co_cond_signal(a->cond);
@@ -204,7 +204,7 @@ void test_cond_timedwait_signaled_before_timeout(void) {
     co_spawn(sched, coroutine_timedwait_signaler, &arg, 0);
     co_scheduler_run(sched);
 
-    TEST_ASSERT_EQUAL_INT(CO_OK, arg.result);   // 被 signal 唤醒，非超时
+    TEST_ASSERT_EQUAL_INT(CO_OK, arg.result);   // Signaled rather than timed out
     TEST_ASSERT_EQUAL_INT(1, arg.signaled);
 
     co_cond_destroy(cond);
@@ -213,35 +213,35 @@ void test_cond_timedwait_signaled_before_timeout(void) {
 }
 
 // ============================================================================
-// 测试：两个 timedwait，一个超时、一个被 signal，验证队列不互相干扰
+// Test: two timedwait calls, one timing out and one signaled, without queue interference
 // ============================================================================
 
 typedef struct {
     co_mutex_t *mutex;
     co_cond_t  *cond;
-    co_error_t  result_a;   // 第一个 waiter（超时）
-    co_error_t  result_b;   // 第二个 waiter（被 signal）
+    co_error_t  result_a;   // First waiter, expected to time out
+    co_error_t  result_b;   // Second waiter, expected to be signaled
 } two_timedwait_arg_t;
 
 static void coroutine_timedwait_short(void *arg) {
     two_timedwait_arg_t *a = (two_timedwait_arg_t *)arg;
     co_mutex_lock(a->mutex);
-    a->result_a = co_cond_timedwait(a->cond, a->mutex, 30); // 30ms 超时
+    a->result_a = co_cond_timedwait(a->cond, a->mutex, 30); // 30 ms timeout
     co_mutex_unlock(a->mutex);
 }
 
 static void coroutine_timedwait_long(void *arg) {
     two_timedwait_arg_t *a = (two_timedwait_arg_t *)arg;
     co_mutex_lock(a->mutex);
-    a->result_b = co_cond_timedwait(a->cond, a->mutex, 500); // 500ms，应被 signal 唤醒
+    a->result_b = co_cond_timedwait(a->cond, a->mutex, 500); // 500 ms, should be signaled
     co_mutex_unlock(a->mutex);
 }
 
 static void coroutine_signal_after_short_timeout(void *arg) {
     two_timedwait_arg_t *a = (two_timedwait_arg_t *)arg;
-    // 等 50ms（超过 short 的 30ms 超时），此时 short 已超时
+    // Wait 50 ms, which exceeds the 30 ms short timeout
     co_sleep(50);
-    // signal：此时只有 long waiter 在队列中
+    // Signal now; only the long waiter should remain in the queue
     co_mutex_lock(a->mutex);
     co_cond_signal(a->cond);
     co_mutex_unlock(a->mutex);
@@ -259,9 +259,9 @@ void test_cond_two_timedwait_independent(void) {
 
     co_scheduler_run(sched);
 
-    // short waiter 应超时
+    // The short waiter should time out
     TEST_ASSERT_EQUAL_INT(CO_ERROR_TIMEOUT, arg.result_a);
-    // long waiter 应被 signal 唤醒
+    // The long waiter should be resumed by signal
     TEST_ASSERT_EQUAL_INT(CO_OK, arg.result_b);
 
     co_cond_destroy(cond);
@@ -270,7 +270,7 @@ void test_cond_two_timedwait_independent(void) {
 }
 
 // ============================================================================
-// 测试入口
+// Test entry
 // ============================================================================
 
 int main(void) {

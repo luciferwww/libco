@@ -1,8 +1,9 @@
 /**
  * @file context.h
- * @brief 协程上下文切换 - 内部接口
+ * @brief Coroutine context switching internal interface
  * 
- * 定义跨平台的上下文切换接口，由平台特定代码实现。
+ * Defines the cross-platform context switching interface implemented by
+ * platform-specific code.
  */
 
 #ifndef LIBCO_INTERNAL_CONTEXT_H
@@ -16,29 +17,29 @@ extern "C" {
 #endif
 
 // ============================================================================
-// 平台特定的上下文结构
+// Platform-specific context structure
 // ============================================================================
 
 #if defined(LIBCO_PLATFORM_LINUX) || defined(LIBCO_PLATFORM_MACOS)
-// Unix-like 平台使用 ucontext
+// Unix-like platforms use ucontext
 #include <ucontext.h>
 
 typedef struct co_context {
-    ucontext_t uctx;            /**< ucontext 上下文 */
-    void *stack_base;           /**< 栈基址 */
-    size_t stack_size;          /**< 栈大小 */
+    ucontext_t uctx;            /**< ucontext state */
+    void *stack_base;           /**< Stack base address */
+    size_t stack_size;          /**< Stack size */
 } co_context_t;
 
 #elif defined(LIBCO_PLATFORM_WINDOWS)
-// Windows 平台使用 Fiber API
+// Windows uses the Fiber API
 #include <windows.h>
 
 typedef struct co_context {
-    LPVOID fiber;               /**< Fiber 句柄 */
-    void *stack_base;           /**< 栈基址 */
-    size_t stack_size;          /**< 栈大小 */
-    co_entry_func_t entry;      /**< 入口函数 */
-    void *arg;                  /**< 用户参数 */
+    LPVOID fiber;               /**< Fiber handle */
+    void *stack_base;           /**< Stack base address */
+    size_t stack_size;          /**< Stack size */
+    co_entry_func_t entry;      /**< Entry function */
+    void *arg;                  /**< User argument */
 } co_context_t;
 
 #else
@@ -46,18 +47,18 @@ typedef struct co_context {
 #endif
 
 // ============================================================================
-// 上下文接口
+// Context interface
 // ============================================================================
 
 /**
- * @brief 初始化协程上下文
+ * @brief Initialize a coroutine context
  * 
- * @param ctx 上下文指针
- * @param stack_base 栈基址
- * @param stack_size 栈大小
- * @param entry 入口函数
- * @param arg 用户参数
- * @return CO_OK 成功，其他值表示错误
+ * @param ctx Context pointer
+ * @param stack_base Stack base address
+ * @param stack_size Stack size
+ * @param entry Entry function
+ * @param arg User argument
+ * @return CO_OK on success, other values indicate errors
  */
 co_error_t co_context_init(co_context_t *ctx,
                            void *stack_base,
@@ -66,24 +67,24 @@ co_error_t co_context_init(co_context_t *ctx,
                            void *arg);
 
 /**
- * @brief 切换上下文
+ * @brief Switch contexts
  * 
- * 保存当前上下文到 from，恢复 to 的上下文并切换执行流。
+ * Save the current context into from, restore to, and switch execution.
  * 
- * @param from 当前上下文（保存点）
- * @param to 目标上下文（恢复点）
- * @return CO_OK 成功，其他值表示错误
+ * @param from Current context save point
+ * @param to Target context restore point
+ * @return CO_OK on success, other values indicate errors
  * 
- * @note 此函数会在两个地方返回：
- *       1. 立即返回（切换到 to 后）
- *       2. 稍后返回（当其他协程切换回 from 时）
+ * @note This function returns in two situations:
+ *       1. immediately after switching to to
+ *       2. later when another coroutine switches back to from
  */
 co_error_t co_context_swap(co_context_t *from, co_context_t *to);
 
 /**
- * @brief 销毁上下文
+ * @brief Destroy a context
  * 
- * @param ctx 上下文指针
+ * @param ctx Context pointer
  */
 void co_context_destroy(co_context_t *ctx);
 

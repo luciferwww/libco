@@ -1,11 +1,11 @@
 /**
  * @file demo_concurrent.c
- * @brief 并发协程示例
+ * @brief Concurrent coroutine demo
  * 
- * 演示：
- * - 创建大量协程
- * - 协程交替执行
- * - 验证调度器性能
+ * Demonstrates:
+ * - creating large numbers of coroutines
+ * - interleaved coroutine execution
+ * - scheduler performance validation
  */
 
 #include <libco/co.h>
@@ -14,14 +14,14 @@
 #include <time.h>
 
 // ============================================================================
-// 全局计数器
+// Global counters
 // ============================================================================
 
 static int g_counter = 0;
 static int g_completed = 0;
 
 // ============================================================================
-// 计数协程
+// Counter coroutine
 // ============================================================================
 
 typedef struct {
@@ -35,7 +35,7 @@ static void counter_routine(void *arg) {
     for (int i = 0; i < args->iterations; i++) {
         g_counter++;
         
-        // 每次递增后让出 CPU
+        // Yield the CPU after each increment
         co_yield();
     }
     
@@ -43,7 +43,7 @@ static void counter_routine(void *arg) {
 }
 
 // ============================================================================
-// 打印进度协程
+// Progress-reporting coroutine
 // ============================================================================
 
 static void progress_routine(void *arg) {
@@ -58,18 +58,18 @@ static void progress_routine(void *arg) {
             last_progress = progress;
         }
         
-        co_sleep(50);  // 每 50ms 检查一次
+        co_sleep(50);  // Check once every 50 ms
     }
     
     printf("Progress: 100%% (%d/%d coroutines completed)\n", total, total);
 }
 
 // ============================================================================
-// 主函数
+// Main function
 // ============================================================================
 
 int main(int argc, char *argv[]) {
-    // 解析命令行参数
+    // Parse command-line arguments
     int num_coroutines = 100;
     int iterations_per_coroutine = 100;
     
@@ -85,17 +85,17 @@ int main(int argc, char *argv[]) {
     printf("Iterations per coroutine: %d\n", iterations_per_coroutine);
     printf("Expected counter value: %d\n\n", num_coroutines * iterations_per_coroutine);
     
-    // 创建调度器
+    // Create the scheduler
     co_scheduler_t *sched = co_scheduler_create(NULL);
     if (!sched) {
         fprintf(stderr, "Failed to create scheduler\n");
         return 1;
     }
     
-    // 创建进度监控协程
+    // Create the progress-monitor coroutine
     co_spawn(sched, progress_routine, &num_coroutines, 0);
     
-    // 创建大量计数协程
+    // Create a large number of counter coroutines
     CounterArgs *args_array = malloc(num_coroutines * sizeof(CounterArgs));
     
     for (int i = 0; i < num_coroutines; i++) {
@@ -106,7 +106,7 @@ int main(int argc, char *argv[]) {
     
     printf("Starting scheduler with %d coroutines...\n\n", num_coroutines);
     
-    // 运行调度器
+    // Run the scheduler
     clock_t start = clock();
     co_error_t err = co_scheduler_run(sched);
     clock_t end = clock();
@@ -121,12 +121,12 @@ int main(int argc, char *argv[]) {
     printf("Completed coroutines: %d\n", g_completed);
     
     if (g_counter == num_coroutines * iterations_per_coroutine) {
-        printf("✓ Counter value is correct!\n");
+        printf("[OK] Counter value is correct!\n");
     } else {
-        printf("✗ Counter value mismatch!\n");
+        printf("[FAIL] Counter value mismatch!\n");
     }
     
-    // 性能统计
+    // Performance statistics
     double coroutines_per_sec = num_coroutines / elapsed;
     double switches_per_sec = (num_coroutines * iterations_per_coroutine) / elapsed;
     
@@ -134,7 +134,7 @@ int main(int argc, char *argv[]) {
     printf("  %.0f coroutines/second\n", coroutines_per_sec);
     printf("  %.0f context switches/second\n", switches_per_sec);
     
-    // 清理
+    // Cleanup
     free(args_array);
     co_scheduler_destroy(sched);
     

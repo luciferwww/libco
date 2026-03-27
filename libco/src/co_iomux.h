@@ -1,17 +1,17 @@
 /**
  * @file co_iomux.h
- * @brief I/O 多路复用统一接口
+ * @brief Unified I/O multiplexing interface
  * 
- * 提供跨平台的 I/O 多路复用抽象层：
+ * Provides a cross-platform abstraction for I/O multiplexing:
  * - Linux: epoll
  * - macOS: kqueue
  * - Windows: IOCP (I/O Completion Ports)
  * 
- * Week 7 实现目标：
- * 1. 统一的事件注册/注销 API
- * 2. 集成到调度器的事件循环
- * 3. 协程式的阻塞 I/O（co_read/co_write）
- * 4. 超时支持
+ * Week 7 implementation goals:
+ * 1. A unified event registration and deregistration API
+ * 2. Integration with the scheduler event loop
+ * 3. Coroutine-friendly blocking I/O (co_read/co_write)
+ * 4. Timeout support
  */
 
 #ifndef LIBCO_CO_IOMUX_H
@@ -36,189 +36,191 @@ extern "C" {
 #endif
 
 // ============================================================================
-// 类型定义
+// Type definitions
 // ============================================================================
 
 /**
- * @brief I/O 事件类型
+ * @brief I/O event types
  */
 typedef enum co_io_event {
-    CO_IO_READ  = 0x01,     /**< 可读事件 */
-    CO_IO_WRITE = 0x02,     /**< 可写事件 */
-    CO_IO_ERROR = 0x04,     /**< 错误事件 */
+    CO_IO_READ  = 0x01,     /**< Readable event */
+    CO_IO_WRITE = 0x02,     /**< Writable event */
+    CO_IO_ERROR = 0x04,     /**< Error event */
 } co_io_event_t;
 
 /**
- * @brief I/O 操作类型（用于 Windows IOCP）
+ * @brief I/O operation types used by Windows IOCP
  */
 typedef enum co_io_op {
-    CO_IO_OP_READ = 1,      /**< 读操作 */
-    CO_IO_OP_WRITE = 2,     /**< 写操作 */
-    CO_IO_OP_ACCEPT = 3,    /**< 接受连接 */
-    CO_IO_OP_CONNECT = 4,   /**< 建立连接 */
+    CO_IO_OP_READ = 1,      /**< Read operation */
+    CO_IO_OP_WRITE = 2,     /**< Write operation */
+    CO_IO_OP_ACCEPT = 3,    /**< Accept operation */
+    CO_IO_OP_CONNECT = 4,   /**< Connect operation */
 } co_io_op_t;
 
 /**
- * @brief 不透明的 I/O 多路复用器句柄
+ * @brief Opaque I/O multiplexer handle
  */
 typedef struct co_iomux co_iomux_t;
 
-// 前向声明
+// Forward declaration
 struct co_routine;
 
 /**
- * @brief I/O 等待上下文
+ * @brief I/O wait context
  * 
- * 当协程等待 I/O 时，将此结构挂在协程上，
- * 记录等待的文件描述符和事件类型。
+ * Attached to a coroutine while it is waiting for I/O, recording the target
+ * file descriptor and the events of interest.
  */
 typedef struct co_io_wait_ctx {
-    co_socket_t fd;             /**< 等待的文件描述符/套接字 */
-    uint32_t events;            /**< 等待的事件（CO_IO_READ | CO_IO_WRITE） */
-    uint32_t revents;           /**< 实际发生的事件 */
-    int64_t timeout_ms;         /**< 超时时间（毫秒），-1 表示无限等待 */
-    uint64_t deadline_ms;       /**< 绝对截止时间（毫秒时间戳） */
-    struct co_routine *routine; /**< 等待的协程 */
+    co_socket_t fd;             /**< File descriptor or socket being waited on */
+    uint32_t events;            /**< Requested events (CO_IO_READ | CO_IO_WRITE) */
+    uint32_t revents;           /**< Events that actually occurred */
+    int64_t timeout_ms;         /**< Timeout in milliseconds, or -1 for no limit */
+    uint64_t deadline_ms;       /**< Absolute deadline in milliseconds */
+    struct co_routine *routine; /**< Waiting coroutine */
     
-    // Windows IOCP 专用字段
+    // Windows IOCP-specific fields
 #ifdef _WIN32
-    OVERLAPPED overlapped;      /**< IOCP 重叠结构 */
-    co_io_op_t op_type;         /**< 操作类型 */
-    void *buffer;               /**< I/O 缓冲区 */
-    size_t buffer_size;         /**< 缓冲区大小 */
-    size_t bytes_transferred;   /**< 已传输字节数 */
+    OVERLAPPED overlapped;      /**< IOCP overlapped structure */
+    co_io_op_t op_type;         /**< Operation type */
+    void *buffer;               /**< I/O buffer */
+    size_t buffer_size;         /**< Buffer size */
+    size_t bytes_transferred;   /**< Bytes transferred */
     
-    // AcceptEx 专用字段
-    co_socket_t accept_socket;  /**< AcceptEx 的客户端套接字 */
-    char accept_buffer[128];    /**< AcceptEx 地址缓冲区 */
+    // AcceptEx-specific fields
+    co_socket_t accept_socket;  /**< Accepted client socket for AcceptEx */
+    char accept_buffer[128];    /**< Address buffer for AcceptEx */
 #endif
 } co_io_wait_ctx_t;
 
 // ============================================================================
-// I/O 多路复用器 API
+// I/O multiplexer API
 // ============================================================================
 
 /**
- * @brief 创建 I/O 多路复用器
- * @param max_events 最大事件数（提示值，实现可能忽略）
- * @return I/O  多路复用器句柄，失败返回 NULL
+ * @brief Create an I/O multiplexer
+ * @param max_events Maximum number of events as a hint; the implementation may ignore it
+ * @return I/O multiplexer handle, or NULL on failure
  */
 co_iomux_t *co_iomux_create(int max_events);
 
 /**
- * @brief 销毁 I/O 多路复用器
- * @param iomux I/O 多路复用器句柄
+ * @brief Destroy an I/O multiplexer
+ * @param iomux I/O multiplexer handle
  */
 void co_iomux_destroy(co_iomux_t *iomux);
 
 /**
- * @brief 注册 I/O 事件监听
+ * @brief Register interest in I/O events
  * 
- * 将文件描述符和感兴趣的事件注册到多路复用器。
+ * Register a file descriptor and the events to watch with the multiplexer.
  * 
- * @param iomux I/O 多路复用器句柄
- * @param wait_ctx I/O 等待上下文（包含 fd、events、routine 等）
- * @return CO_OK 成功，其他值表示错误
+ * @param iomux I/O multiplexer handle
+ * @param wait_ctx I/O wait context containing fd, events, routine, and related state
+ * @return CO_OK on success, other values indicate errors
  */
 co_error_t co_iomux_add(co_iomux_t *iomux, co_io_wait_ctx_t *wait_ctx);
 
 /**
- * @brief 修改 I/O 事件监听
- * @param iomux I/O 多路复用器句柄
- * @param wait_ctx I/O 等待上下文
- * @return CO_OK 成功，其他值表示错误
+ * @brief Modify registered I/O events
+ * @param iomux I/O multiplexer handle
+ * @param wait_ctx I/O wait context
+ * @return CO_OK on success, other values indicate errors
  */
 co_error_t co_iomux_mod(co_iomux_t *iomux, co_io_wait_ctx_t *wait_ctx);
 
 /**
- * @brief 注销 I/O 事件监听
- * @param iomux I/O 多路复用器句柄
- * @param fd 文件描述符
- * @return CO_OK 成功，其他值表示错误
+ * @brief Unregister I/O event interest
+ * @param iomux I/O multiplexer handle
+ * @param fd File descriptor
+ * @return CO_OK on success, other values indicate errors
  */
 co_error_t co_iomux_del(co_iomux_t *iomux, co_socket_t fd);
 
 /**
- * @brief 轮询 I/O 事件
+ * @brief Poll for I/O events
  * 
- * 检查是否有 I/O 事件就绪，并唤醒对应的协程。
+ * Check for ready I/O events and wake the corresponding coroutines.
  * 
- * @param iomux I/O 多路复用器句柄
- * @param timeout_ms 超时时间（毫秒），0 表示非阻塞立即返回，-1 表示无限等待
- * @param out_ready_count [out] 就绪的事件数量
- * @return CO_OK 成功，CO_ERROR_TIMEOUT 超时，其他值表示错误
+ * @param iomux I/O multiplexer handle
+ * @param timeout_ms Timeout in milliseconds; 0 is non-blocking, -1 waits indefinitely
+ * @param out_ready_count [out] Number of ready events
+ * @return CO_OK on success, CO_ERROR_TIMEOUT on timeout, other values indicate errors
  */
 co_error_t co_iomux_poll(co_iomux_t *iomux, int timeout_ms, int *out_ready_count);
 
 /**
- * @brief 设置文件描述符为非阻塞模式
- * @param fd 文件描述符
- * @return CO_OK 成功，其他值表示错误
+ * @brief Set a file descriptor to non-blocking mode
+ * @param fd File descriptor
+ * @return CO_OK on success, other values indicate errors
  */
 co_error_t co_set_nonblocking(co_socket_t fd);
 
 /**
- * @brief 设置文件描述符为阻塞模式
- * @param fd 文件描述符
- * @return CO_OK 成功，其他值表示错误
+ * @brief Set a file descriptor to blocking mode
+ * @param fd File descriptor
+ * @return CO_OK on success, other values indicate errors
  */
 co_error_t co_set_blocking(co_socket_t fd);
 
 // ============================================================================
-// 协程式 I/O API（Week 7 核心功能）
+// Coroutine-friendly I/O API (Week 7 core functionality)
 // ============================================================================
 
 /**
- * @brief 协程式读取
+ * @brief Coroutine-aware read
  * 
- * 从文件描述符读取数据。如果数据未就绪，挂起当前协程，
- * 直到数据可读或超时。
+ * Read data from a file descriptor. If data is not ready, suspend the current
+ * coroutine until it becomes readable or the operation times out.
  * 
- * @param fd 文件描述符
- * @param buf 缓冲区
- * @param count 要读取的字节数
- * @param timeout_ms 超时时间（毫秒），-1 表示无限等待
- * @return 实际读取的字节数，-1 表示错误（检查 errno/WSAGetLastError）
+ * @param fd File descriptor
+ * @param buf Buffer
+ * @param count Number of bytes to read
+ * @param timeout_ms Timeout in milliseconds, or -1 to wait indefinitely
+ * @return Number of bytes read, or -1 on error (check errno/WSAGetLastError)
  */
 ssize_t co_read(co_socket_t fd, void *buf, size_t count, int64_t timeout_ms);
 
 /**
- * @brief 协程式写入
+ * @brief Coroutine-aware write
  * 
- * 向文件描述符写入数据。如果缓冲区已满，挂起当前协程，
- * 直到可写或超时。
+ * Write data to a file descriptor. If the buffer is full, suspend the current
+ * coroutine until it becomes writable or the operation times out.
  * 
- * @param fd 文件描述符
- * @param buf 缓冲区
- * @param count 要写入的字节数
- * @param timeout_ms 超时时间（毫秒），-1 表示无限等待
- * @return 实际写入的字节数，-1 表示错误
+ * @param fd File descriptor
+ * @param buf Buffer
+ * @param count Number of bytes to write
+ * @param timeout_ms Timeout in milliseconds, or -1 to wait indefinitely
+ * @return Number of bytes written, or -1 on error
  */
 ssize_t co_write(co_socket_t fd, const void *buf, size_t count, int64_t timeout_ms);
 
 /**
- * @brief 协程式接受连接
+ * @brief Coroutine-aware accept
  * 
- * 接受新的客户端连接。如果没有连接到达，挂起当前协程。
+ * Accept a new client connection. If no connection arrives, suspend the
+ * current coroutine.
  * 
- * @param sockfd 监听套接字
- * @param addr [out] 客户端地址（可为 NULL）
- * @param addrlen [in/out] 地址长度（可为 NULL）
- * @param timeout_ms 超时时间（毫秒），-1 表示无限等待
- * @return 新连接的文件描述符，-1 表示错误
+ * @param sockfd Listening socket
+ * @param addr [out] Client address, or NULL
+ * @param addrlen [in/out] Address length, or NULL
+ * @param timeout_ms Timeout in milliseconds, or -1 to wait indefinitely
+ * @return New file descriptor, or -1 on error
  */
 co_socket_t co_accept(co_socket_t sockfd, void *addr, socklen_t *addrlen, int64_t timeout_ms);
 
 /**
- * @brief 协程式连接
+ * @brief Coroutine-aware connect
  * 
- * 连接到远程服务器。如果连接未完成，挂起当前协程。
+ * Connect to a remote server. If the connection does not complete
+ * immediately, suspend the current coroutine.
  * 
- * @param sockfd 套接字
- * @param addr 服务器地址
- * @param addrlen 地址长度
- * @param timeout_ms 超时时间（毫秒），-1 表示无限等待
- * @return 0 成功，-1 失败
+ * @param sockfd Socket
+ * @param addr Server address
+ * @param addrlen Address length
+ * @param timeout_ms Timeout in milliseconds, or -1 to wait indefinitely
+ * @return 0 on success, -1 on failure
  */
 int co_connect(co_socket_t sockfd, const void *addr, socklen_t addrlen, int64_t timeout_ms);
 

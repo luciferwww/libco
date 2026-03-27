@@ -1,8 +1,8 @@
 /**
  * @file test_routine.c
- * @brief 协程单元测试
+ * @brief Coroutine unit tests
  * 
- * 测试协程的基本功能和生命周期。
+ * Tests basic coroutine behavior and lifecycle handling.
  */
 
 #include "unity.h"
@@ -12,10 +12,10 @@
 #include <string.h>
 
 // ============================================================================
-// 测试辅助
+// Test helpers
 // ============================================================================
 
-// 全局变量
+// Global state
 static int g_test_counter = 0;
 static void *g_test_arg = NULL;
 static co_routine_t *g_test_routine = NULL;
@@ -27,15 +27,15 @@ void setUp(void) {
 }
 
 void tearDown(void) {
-    // 清理工作
+    // Cleanup work
 }
 
 // ============================================================================
-// 测试协程函数
+// Test coroutine functions
 // ============================================================================
 
 /**
- * @brief 简单的测试协程
+ * @brief Simple test coroutine
  */
 static void test_coroutine_simple(void *arg) {
     g_test_arg = arg;
@@ -43,10 +43,10 @@ static void test_coroutine_simple(void *arg) {
 }
 
 /**
- * @brief 验证 co_current() 的协程
+ * @brief Coroutine that validates co_current()
  */
 static void test_coroutine_check_current(void *arg) {
-    (void)arg;  // 未使用参数
+     (void)arg;  // Unused parameter
     co_routine_t *current = co_current();
     TEST_ASSERT_NOT_NULL(current);
     TEST_ASSERT_EQUAL_PTR(g_test_routine, current);
@@ -54,7 +54,7 @@ static void test_coroutine_check_current(void *arg) {
 }
 
 /**
- * @brief 验证 co_current_scheduler() 的协程
+ * @brief Coroutine that validates co_current_scheduler()
  */
 static void test_coroutine_check_scheduler(void *arg) {
     co_scheduler_t *sched = (co_scheduler_t *)arg;
@@ -65,7 +65,7 @@ static void test_coroutine_check_scheduler(void *arg) {
 }
 
 /**
- * @brief 测试协程参数传递
+ * @brief Test coroutine argument passing
  */
 static void test_coroutine_with_arg(void *arg) {
     int *value = (int *)arg;
@@ -74,11 +74,11 @@ static void test_coroutine_with_arg(void *arg) {
 }
 
 // ============================================================================
-// 协程创建测试
+// Coroutine creation tests
 // ============================================================================
 
 /**
- * @brief 测试协程创建
+ * @brief Test coroutine creation
  */
 void test_routine_spawn(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
@@ -91,7 +91,7 @@ void test_routine_spawn(void) {
 }
 
 /**
- * @brief 测试协程参数传递
+ * @brief Test coroutine argument passing
  */
 void test_routine_argument(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
@@ -104,20 +104,20 @@ void test_routine_argument(void) {
     co_error_t err = co_scheduler_run(sched);
     TEST_ASSERT_EQUAL_INT(CO_OK, err);
     
-    // 验证参数正确传递
+    // Verify that the argument was passed correctly
     TEST_ASSERT_EQUAL_PTR(test_arg, g_test_arg);
     
     co_scheduler_destroy(sched);
 }
 
 /**
- * @brief 测试自定义栈大小
+ * @brief Test custom stack size
  */
 void test_routine_custom_stack(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
     TEST_ASSERT_NOT_NULL(sched);
     
-    // 创建较小栈的协程（32KB）
+    // Create a coroutine with a smaller 32 KB stack
     co_routine_t *co = co_spawn(sched, test_coroutine_simple, NULL, 32 * 1024);
     TEST_ASSERT_NOT_NULL(co);
     
@@ -128,19 +128,19 @@ void test_routine_custom_stack(void) {
 }
 
 // ============================================================================
-// co_current() 测试
+// co_current() tests
 // ============================================================================
 
 /**
- * @brief 测试 co_current() 在主线程中
+ * @brief Test co_current() on the main thread
  */
 void test_current_in_main(void) {
     co_routine_t *current = co_current();
-    TEST_ASSERT_NULL(current);  // 不在协程中应该返回 NULL
+    TEST_ASSERT_NULL(current);  // Outside a coroutine this should return NULL
 }
 
 /**
- * @brief 测试 co_current() 在协程中
+ * @brief Test co_current() inside a coroutine
  */
 void test_current_in_coroutine(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
@@ -152,26 +152,26 @@ void test_current_in_coroutine(void) {
     co_error_t err = co_scheduler_run(sched);
     TEST_ASSERT_EQUAL_INT(CO_OK, err);
     
-    // 验证协程已执行
+    // Verify that the coroutine executed
     TEST_ASSERT_EQUAL_INT(1, g_test_counter);
     
     co_scheduler_destroy(sched);
 }
 
 // ============================================================================
-// co_current_scheduler() 测试
+// co_current_scheduler() tests
 // ============================================================================
 
 /**
- * @brief 测试 co_current_scheduler() 在主线程中
+ * @brief Test co_current_scheduler() on the main thread
  */
 void test_current_scheduler_in_main(void) {
     co_scheduler_t *sched = co_current_scheduler();
-    TEST_ASSERT_NULL(sched);  // 不在调度器中应该返回 NULL
+    TEST_ASSERT_NULL(sched);  // Outside a scheduler this should return NULL
 }
 
 /**
- * @brief 测试 co_current_scheduler() 在协程中
+ * @brief Test co_current_scheduler() inside a coroutine
  */
 void test_current_scheduler_in_coroutine(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
@@ -183,18 +183,18 @@ void test_current_scheduler_in_coroutine(void) {
     co_error_t err = co_scheduler_run(sched);
     TEST_ASSERT_EQUAL_INT(CO_OK, err);
     
-    // 验证协程已执行
+    // Verify that the coroutine executed
     TEST_ASSERT_EQUAL_INT(1, g_test_counter);
     
     co_scheduler_destroy(sched);
 }
 
 // ============================================================================
-// 协程生命周期测试
+// Coroutine lifecycle tests
 // ============================================================================
 
 /**
- * @brief 测试协程执行完成
+ * @brief Test coroutine completion
  */
 void test_routine_completion(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
@@ -208,14 +208,14 @@ void test_routine_completion(void) {
     co_error_t err = co_scheduler_run(sched);
     TEST_ASSERT_EQUAL_INT(CO_OK, err);
     
-    // 验证协程执行了
+    // Verify that the coroutine ran
     TEST_ASSERT_EQUAL_INT(1, g_test_counter);
     
     co_scheduler_destroy(sched);
 }
 
 /**
- * @brief 测试协程修改参数
+ * @brief Test coroutine argument modification
  */
 void test_routine_modify_argument(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
@@ -228,33 +228,33 @@ void test_routine_modify_argument(void) {
     co_error_t err = co_scheduler_run(sched);
     TEST_ASSERT_EQUAL_INT(CO_OK, err);
     
-    // 验证参数被修改
+    // Verify that the argument was modified
     TEST_ASSERT_EQUAL_INT(20, value);
     
     co_scheduler_destroy(sched);
 }
 
 // ============================================================================
-// 主函数
+// Main function
 // ============================================================================
 
 int main(void) {
     UNITY_BEGIN();
     
-    // 协程创建测试
+    // Coroutine creation tests
     RUN_TEST(test_routine_spawn);
     RUN_TEST(test_routine_argument);
     RUN_TEST(test_routine_custom_stack);
     
-    // co_current() 测试
+    // co_current() tests
     RUN_TEST(test_current_in_main);
     RUN_TEST(test_current_in_coroutine);
     
-    // co_current_scheduler() 测试
+    // co_current_scheduler() tests
     RUN_TEST(test_current_scheduler_in_main);
     RUN_TEST(test_current_scheduler_in_coroutine);
     
-    // 生命周期测试
+    // Lifecycle tests
     RUN_TEST(test_routine_completion);
     RUN_TEST(test_routine_modify_argument);
     

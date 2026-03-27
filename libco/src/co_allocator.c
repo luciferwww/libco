@@ -1,6 +1,6 @@
 /**
  * @file co_allocator.c
- * @brief 自定义内存分配器实现
+ * @brief Custom memory allocator implementation
  */
 
 #include "co_allocator.h"
@@ -9,7 +9,7 @@
 #include <stdbool.h>
 
 // ============================================================================
-// 全局分配器
+// Global allocator
 // ============================================================================
 
 static co_allocator_t g_allocator = {
@@ -22,7 +22,7 @@ static co_allocator_t g_allocator = {
 static bool g_has_custom_allocator = false;
 
 // ============================================================================
-// 分配器管理
+// Allocator management
 // ============================================================================
 
 void co_set_allocator(const co_allocator_t *allocator) {
@@ -30,7 +30,7 @@ void co_set_allocator(const co_allocator_t *allocator) {
         g_allocator = *allocator;
         g_has_custom_allocator = true;
     } else {
-        // 恢复默认分配器
+        // Restore the default allocator
         g_allocator.malloc_fn = NULL;
         g_allocator.realloc_fn = NULL;
         g_allocator.free_fn = NULL;
@@ -44,7 +44,7 @@ const co_allocator_t *co_get_allocator(void) {
 }
 
 // ============================================================================
-// 内部分配函数
+// Internal allocation helpers
 // ============================================================================
 
 void *co_malloc(size_t size) {

@@ -1,8 +1,8 @@
 /**
  * @file co_scheduler.c
- * @brief 调度器实现
+ * @brief Scheduler implementation
  * 
- * 实现协程调度器的核心功能。
+ * Implements the core coroutine scheduler logic.
  */
 
 #include "co_scheduler.h"
@@ -18,39 +18,39 @@
 #endif
 
 // ============================================================================
-// 默认配置
+// Default configuration
 // ============================================================================
 
 #define DEFAULT_STACK_SIZE (128 * 1024)  // 128KB
-#define DEFAULT_STACK_POOL_CAPACITY 16   // 默认栈池容量
+#define DEFAULT_STACK_POOL_CAPACITY 16   // Default stack pool capacity
 
 // ============================================================================
-// 线程局部存储
+// Thread-local storage
 // ============================================================================
 
-// 当前线程的调度器
+// Scheduler for the current thread
 static _Thread_local co_scheduler_t *g_current_scheduler = NULL;
 
 // ============================================================================
-// 调度器创建和销毁
+// Scheduler creation and destruction
 // ============================================================================
 
 co_scheduler_t *co_scheduler_create(void *config) {
-    // TODO(v2.1): 支持配置参数
-    // config 应该是 co_scheduler_config_t* 类型，用于配置：
-    // - 默认栈大小
-    // - 最大协程数
-    // - 调度策略
-    // 当前忽略 config 参数，使用默认值
-    (void)config;  // 未使用
+    // TODO(v2.1): Support configuration parameters
+    // config should be of type co_scheduler_config_t* and configure:
+    // - default stack size
+    // - maximum coroutine count
+    // - scheduling policy
+    // For now, config is ignored and defaults are used.
+    (void)config;  // Unused
     
-    // 分配调度器
+    // Allocate the scheduler
     co_scheduler_t *sched = (co_scheduler_t *)calloc(1, sizeof(co_scheduler_t));
     if (!sched) {
         return NULL;
     }
     
-    // 初始化字段
+    // Initialize fields
     co_queue_init(&sched->ready_queue);
     sched->current = NULL;
     sched->default_stack_size = DEFAULT_STACK_SIZE;
@@ -62,21 +62,21 @@ co_scheduler_t *co_scheduler_create(void *config) {
     sched->waiting_io_count = 0;
     sched->next_id = 1;
     
-    // 创建栈池（Week 5）
+    // Create the stack pool (Week 5)
     sched->stack_pool = co_stack_pool_create(DEFAULT_STACK_SIZE, DEFAULT_STACK_POOL_CAPACITY);
     if (!sched->stack_pool) {
         free(sched);
         return NULL;
     }
     
-    // 初始化定时器堆（Week 6）
+    // Initialize the timer heap (Week 6)
     if (!co_timer_heap_init(&sched->timer_heap, 16)) {
         co_stack_pool_destroy(sched->stack_pool);
         free(sched);
         return NULL;
     }
     
-    // 创建 I/O 多路复用器（Week 7）
+    // Create the I/O multiplexer (Week 7)
     sched->iomux = co_iomux_create(1024);
     if (!sched->iomux) {
         co_timer_heap_destroy(&sched->timer_heap);
@@ -85,7 +85,7 @@ co_scheduler_t *co_scheduler_create(void *config) {
         return NULL;
     }
     
-    // 初始化主上下文（用于保存调度器上下文）
+    // Initialize the main context used by the scheduler
     memset(&sched->main_ctx, 0, sizeof(sched->main_ctx));
 
     return sched;
@@ -96,7 +96,7 @@ void co_scheduler_destroy(co_scheduler_t *sched) {
         return;
     }
     
-    // 销毁所有未完成的协程
+    // Destroy all unfinished coroutines
     while (!co_queue_empty(&sched->ready_queue)) {
         co_queue_node_t *node = co_queue_pop_front(&sched->ready_queue);
         co_routine_t *routine = (co_routine_t *)((char *)node - offsetof(co_routine_t, queue_node));
@@ -104,30 +104,30 @@ void co_scheduler_destroy(co_scheduler_t *sched) {
         free(routine);
     }
     
-    // 销毁所有休眠的协程（Week 6）
+    // Destroy all sleeping coroutines (Week 6)
     while (!co_timer_heap_empty(&sched->timer_heap)) {
         co_routine_t *routine = co_timer_heap_pop(&sched->timer_heap);
         co_routine_destroy(routine);
         free(routine);
     }
     
-    // 销毁定时器堆（Week 6）
+    // Destroy the timer heap (Week 6)
     co_timer_heap_destroy(&sched->timer_heap);
     
-    // 销毁 I/O 多路复用器（Week 7）
+    // Destroy the I/O multiplexer (Week 7)
     if (sched->iomux) {
         co_iomux_destroy(sched->iomux);
     }
     
-    // 销毁栈池（Week 5）
+    // Destroy the stack pool (Week 5)
     co_stack_pool_destroy(sched->stack_pool);
 
-    // 释放调度器
+    // Release the scheduler
     free(sched);
 }
 
 // ============================================================================
-// 调度器运行
+// Scheduler execution
 // ============================================================================
 
 co_error_t co_scheduler_run(co_scheduler_t *sched) {
@@ -136,40 +136,39 @@ co_error_t co_scheduler_run(co_scheduler_t *sched) {
     }
     
     if (sched->running) {
-        return CO_ERROR;  // 已经在运行
+        return CO_ERROR;  // Already running
     }
     
-    // 设置为当前调度器
+    // Set as the current scheduler
     g_current_scheduler = sched;
     sched->running = true;
     sched->should_stop = false;
     
-    // 主循环：不断调度协程，直到所有协程结束或被停止
+    // Main loop: keep scheduling until all coroutines finish or stop is requested
     while (!sched->should_stop) {
-        // Week 6: 检查定时器，唤醒到期的休眠协程
+        // Week 6: check timers and wake expired sleeping coroutines
         uint64_t now = co_get_monotonic_time_ms();
         while (!co_timer_heap_empty(&sched->timer_heap)) {
             co_routine_t *routine = co_timer_heap_peek(&sched->timer_heap);
             if (routine->wakeup_time > now) {
-                break;  // 堆顶还未到期，后面的更不可能到期
+                break;  // The heap top has not expired yet; later entries cannot either
             }
             
-            // 弹出到期协程
+            // Pop the expired coroutine
             co_timer_heap_pop(&sched->timer_heap);
 
-            // 检查协程是否已由 signal/broadcast 提前唤醒：
-            // signal 会将 state 改为 READY 并入就绪队列，此时定时器已是过期事件，直接丢弃。
+            // Drop stale timer events for coroutines already resumed by signal or broadcast.
             if (routine->state != CO_STATE_WAITING) {
                 continue;
             }
 
-            // co_cond_timedwait 超时：从条件变量等待队列移除
+            // co_cond_timedwait timeout: remove it from the condition wait queue
             if (routine->cond_wait_queue != NULL) {
                 co_queue_remove(routine->cond_wait_queue, &routine->queue_node);
                 routine->timed_out = true;
                 routine->cond_wait_queue = NULL;
             } else if (routine->io_waiting) {
-                // co_wait_io 超时：更新 waiting_io_count，唤醒后由 co_wait_io 自身调用 co_iomux_del 清理
+                // co_wait_io timeout: update waiting_io_count; co_wait_io cleans up via co_iomux_del
                 routine->io_waiting = false;
                 routine->timed_out = true;
                 routine->scheduler->waiting_io_count--;
@@ -178,10 +177,10 @@ co_error_t co_scheduler_run(co_scheduler_t *sched) {
             co_scheduler_enqueue(sched, routine);
         }
         
-        // 如果没有就绪协程，检查是否需要等待
+        // If no coroutine is ready, determine whether to wait
         if (co_queue_empty(&sched->ready_queue)) {
-            // 如果还有休眠的协程，计算到下一个唤醒时间
-            int io_timeout_ms = -1;  // 默认无限等待
+            // If sleeping coroutines remain, compute the next wakeup deadline
+            int io_timeout_ms = -1;  // Default: wait indefinitely
             
             if (!co_timer_heap_empty(&sched->timer_heap)) {
                 co_routine_t *next_wakeup = co_timer_heap_peek(&sched->timer_heap);
@@ -189,28 +188,27 @@ co_error_t co_scheduler_run(co_scheduler_t *sched) {
                 io_timeout_ms = (wait_ms > 0) ? (int)wait_ms : 0;
             }
             
-            // Week 7: 轮询 I/O 事件（带超时）
-            // 只有存在 I/O 等待者（waiting_io_count > 0）或定时器时才调用 epoll_wait，
-            // 否则 ready_queue 和 timer_heap 均为空，意味着所有协程已完成，应退出。
+            // Week 7: poll I/O events with timeout.
+            // Only poll when there are I/O waiters or timers. Otherwise all work is done.
             if (sched->waiting_io_count > 0 || !co_timer_heap_empty(&sched->timer_heap)) {
                 int ready_count = 0;
                 co_iomux_poll(sched->iomux, io_timeout_ms, &ready_count);
-                // I/O 就绪的协程已被自动加入就绪队列
+                // I/O-ready coroutines have already been requeued automatically
             }
             
-            // 重新检查就绪队列
+            // Recheck the ready queue
             if (co_queue_empty(&sched->ready_queue)) {
-                // 仍然没有就绪协程，退出
+                // Still no ready coroutines; exit if no timers remain
                 if (co_timer_heap_empty(&sched->timer_heap)) {
-                    break;  // 没有任何协程在运行或等待
+                    break;  // No coroutine is running or waiting anymore
                 }
             }
             
-            // 继续循环，再次检查定时器和就绪队列
+            // Continue the loop and recheck timers and ready coroutines
             continue;
         }
         
-        // 调度一个协程
+        // Schedule one coroutine
         co_error_t err = co_scheduler_schedule(sched);
         if (err != CO_OK) {
             sched->running = false;
@@ -226,48 +224,48 @@ co_error_t co_scheduler_run(co_scheduler_t *sched) {
 }
 
 // ============================================================================
-// 调度逻辑
+// Scheduling logic
 // ============================================================================
 
 co_error_t co_scheduler_schedule(co_scheduler_t *sched) {
     assert(sched != NULL);
     
-    // 从就绪队列中取出下一个协程
+    // Pop the next coroutine from the ready queue
     co_routine_t *next = co_scheduler_dequeue(sched);
     if (!next) {
-        return CO_OK;  // 没有可运行的协程
+        return CO_OK;  // No runnable coroutine
     }
     
-    // 调试输出
+    // Debug output
     #ifdef DEBUG_SCHED
     fprintf(stderr, "[SCHED] Scheduling routine %lu, state=%d\n", 
             next->id, next->state);
     #endif
     
-    // 保存之前的协程（未使用，保留供未来协程间直接切换扩展）
+    // Save the previous coroutine for possible future direct coroutine switching support
     // co_routine_t *prev = sched->current;
 
-    // 设置当前协程
+    // Set the current coroutine
     sched->current = next;
     next->state = CO_STATE_RUNNING;
     
-    // 增加切换计数
+    // Increment the context switch counter
     sched->switch_count++;
 
-    // 从主上下文切换到协程
-    // 调度器主循环始终通过 main_ctx 进入协程，不直接和协程互切
+    // Switch from the main scheduler context into the coroutine.
+    // The scheduler always enters through main_ctx instead of coroutine-to-coroutine switching.
     co_error_t err = co_context_swap(&sched->main_ctx, &next->context);
     
-    // 注意：这里在两个时刻会返回
-    // 1. 其他协程 yield 回来时
-    // 2. 当前协程结束时
+    // Note: execution returns here in two cases:
+    // 1. another coroutine yields back
+    // 2. the current coroutine finishes
     
-    // 清除当前协程指针（协程yield或结束后）
+    // Clear the current coroutine pointer after yield or completion
     sched->current = NULL;
     
-    // 检查协程是否已结束，如果是则清理
+    // Clean up finished coroutines
     if (next->state == CO_STATE_DEAD) {
-        // 协程已完成，销毁并释放
+        // Coroutine is done; destroy and free it
         co_routine_destroy(next);
         free(next);
     }
@@ -279,7 +277,7 @@ void co_scheduler_enqueue(co_scheduler_t *sched, co_routine_t *routine) {
     assert(sched != NULL);
     assert(routine != NULL);
     
-    // 将协程加入就绪队列尾部
+    // Append the coroutine to the end of the ready queue
     co_queue_push_back(&sched->ready_queue, &routine->queue_node);
     routine->state = CO_STATE_READY;
 }
@@ -287,19 +285,19 @@ void co_scheduler_enqueue(co_scheduler_t *sched, co_routine_t *routine) {
 co_routine_t *co_scheduler_dequeue(co_scheduler_t *sched) {
     assert(sched != NULL);
     
-    // 从就绪队列头部取出协程
+    // Pop a coroutine from the front of the ready queue
     co_queue_node_t *node = co_queue_pop_front(&sched->ready_queue);
     if (!node) {
         return NULL;
     }
     
-    // 通过偏移计算协程指针（侵入式链表）
+    // Compute the coroutine pointer via offset arithmetic (intrusive list)
     co_routine_t *routine = (co_routine_t *)((char *)node - offsetof(co_routine_t, queue_node));
     return routine;
 }
 
 // ============================================================================
-// 全局访问器
+// Global accessors
 // ============================================================================
 
 co_scheduler_t *co_current_scheduler(void) {
@@ -312,5 +310,5 @@ co_routine_t *co_current(void) {
 }
 
 co_routine_t *co_current_routine(void) {
-    return co_current();  // 别名
+    return co_current();  // Alias
 }

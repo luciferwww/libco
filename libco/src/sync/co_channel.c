@@ -1,24 +1,28 @@
 /**
  * @file co_channel.c
- * @brief 协程 Channel 实现
+ * @brief Coroutine channel implementation
  *
- * 设计要点：
- * - 有缓冲（capacity > 0）：缓冲区未满时 send 立即返回；缓冲区空时 recv 挂起
- * - 无缓冲（capacity == 0）：send 必须等到有 recv 方，双方握手后同时继续
- * - 挂起用 co_context_swap() 而非 co_yield()，避免协程错误地重新入就绪队列
- * - 等待队列复用协程的 queue_node（WAITING 状态下节点可安全复用）
- * - chan_data 指针临时存放 send 的源数据指针 或 recv 的目标缓冲区指针
+ * Design notes:
+ * - Buffered channels (capacity > 0): send returns immediately if space exists;
+ *   recv suspends when the buffer is empty
+ * - Unbuffered channels (capacity == 0): send waits for a receiver so both
+ *   sides continue after a rendezvous
+ * - Suspension uses co_context_swap() instead of co_yield() to avoid placing a
+ *   waiting coroutine back into the ready queue by mistake
+ * - Wait queues reuse each coroutine's queue_node while it is WAITING
+ * - chan_data temporarily stores the send source pointer or recv destination
+ *   buffer pointer
  *
- * send 优先级（有缓冲）：
- *   1. 有等待的 receiver → 直接交付，唤醒 receiver
- *   2. 缓冲区未满 → 写入缓冲区
- *   3. 否则挂起，等 receiver 来唤醒
+ * Send priority for buffered channels:
+ *   1. Waiting receiver -> hand off data directly and wake the receiver
+ *   2. Buffer has space -> write into the buffer
+ *   3. Otherwise suspend until a receiver resumes the sender
  *
- * recv 优先级（有缓冲）：
- *   1. 缓冲区有数据 → 读出，并从 send_queue 取一个 sender 填充缓冲区
- *   2. 有等待的 sender（无缓冲 rendezvous）→ 直接从 sender 复制数据
- *   3. channel 已关闭 → 返回 CO_ERROR_CLOSED
- *   4. 否则挂起
+ * Receive priority for buffered channels:
+ *   1. Buffer has data -> read it, then refill from send_queue if possible
+ *   2. Waiting sender in unbuffered rendezvous -> copy directly from sender
+ *   3. Closed channel -> return CO_ERROR_CLOSED
+ *   4. Otherwise suspend
  */
 
 #include "co_channel.h"
@@ -30,19 +34,19 @@
 #include <stddef.h>
 #include <assert.h>
 
-/* 从 queue_node 还原 co_routine_t 指针 */
+/* Recover the co_routine_t pointer from a queue_node */
 static inline co_routine_t *node_to_routine(co_queue_node_t *node) {
     return (co_routine_t *)((char *)node - offsetof(co_routine_t, queue_node));
 }
 
-/* 将协程放回就绪队列 */
+/* Put a coroutine back into the ready queue */
 static inline void wake_routine(co_routine_t *co) {
     co->state = CO_STATE_READY;
     co_queue_push_back(&co->scheduler->ready_queue, &co->queue_node);
 }
 
 // ============================================================================
-// 创建 / 销毁
+// Creation and destruction
 // ============================================================================
 
 co_channel_t *co_channel_create(size_t elem_size, size_t capacity) {
@@ -77,7 +81,7 @@ co_error_t co_channel_destroy(co_channel_t *ch) {
 }
 
 // ============================================================================
-// 发送
+// Send
 // ============================================================================
 
 co_error_t co_channel_send(co_channel_t *ch, const void *data) {
@@ -88,7 +92,7 @@ co_error_t co_channel_send(co_channel_t *ch, const void *data) {
         return CO_ERROR_CLOSED;
     }
 
-    /* 1. 有等待的接收者：直接交付（无缓冲 rendezvous 也走这条路） */
+    /* 1. Waiting receiver: hand off directly, including unbuffered rendezvous */
     co_queue_node_t *node = co_queue_pop_front(&ch->recv_queue);
     if (node) {
         co_routine_t *receiver = node_to_routine(node);
@@ -97,7 +101,7 @@ co_error_t co_channel_send(co_channel_t *ch, const void *data) {
         return CO_OK;
     }
 
-    /* 2. 有缓冲且未满：写入缓冲区 */
+    /* 2. Buffered and not full: write into the buffer */
     if (ch->count < ch->capacity) {
         void *dest = (char *)ch->buffer + ch->tail * ch->elem_size;
         memcpy(dest, data, ch->elem_size);
@@ -106,20 +110,20 @@ co_error_t co_channel_send(co_channel_t *ch, const void *data) {
         return CO_OK;
     }
 
-    /* 3. 阻塞：挂起当前协程，等待接收者来唤醒 */
+    /* 3. Block by suspending until a receiver wakes the current coroutine */
     co_scheduler_t *sched   = co_current_scheduler();
     co_routine_t   *current = co_current_routine();
     if (!sched || !current) {
         return CO_ERROR_INVAL;
     }
 
-    current->chan_data = (void *)data;   /* 指向调用者栈上的数据，send 期间有效 */
+    current->chan_data = (void *)data;   /* Points to caller stack data, valid for the send duration */
     current->state     = CO_STATE_WAITING;
     co_queue_push_back(&ch->send_queue, &current->queue_node);
 
     co_context_swap(&current->context, &sched->main_ctx);
 
-    /* 被唤醒后检查 channel 是否在挂起期间被关闭 */
+    /* After resuming, check whether the channel was closed while suspended */
     return ch->closed ? CO_ERROR_CLOSED : CO_OK;
 }
 
@@ -147,11 +151,11 @@ co_error_t co_channel_trysend(co_channel_t *ch, const void *data) {
         return CO_OK;
     }
 
-    return CO_ERROR_BUSY;   /* 缓冲区满且无等待 receiver */
+    return CO_ERROR_BUSY;   /* Buffer is full and no receiver is waiting */
 }
 
 // ============================================================================
-// 接收
+// Receive
 // ============================================================================
 
 co_error_t co_channel_recv(co_channel_t *ch, void *data) {
@@ -159,14 +163,14 @@ co_error_t co_channel_recv(co_channel_t *ch, void *data) {
         return CO_ERROR_INVAL;
     }
 
-    /* 1. 缓冲区有数据 */
+    /* 1. Buffered data is available */
     if (ch->count > 0) {
         void *src = (char *)ch->buffer + ch->head * ch->elem_size;
         memcpy(data, src, ch->elem_size);
         ch->head = (ch->head + 1) % ch->capacity;
         ch->count--;
 
-        /* 缓冲区腾出空间，唤醒一个等待的 sender 并将其数据写入缓冲区 */
+        /* Space was freed, so wake one waiting sender and move its data into the buffer */
         co_queue_node_t *node = co_queue_pop_front(&ch->send_queue);
         if (node) {
             co_routine_t *sender = node_to_routine(node);
@@ -179,7 +183,7 @@ co_error_t co_channel_recv(co_channel_t *ch, void *data) {
         return CO_OK;
     }
 
-    /* 2. 缓冲区空，但有等待的 sender（含无缓冲 rendezvous） */
+    /* 2. Buffer is empty but a sender is waiting, including unbuffered rendezvous */
     co_queue_node_t *node = co_queue_pop_front(&ch->send_queue);
     if (node) {
         co_routine_t *sender = node_to_routine(node);
@@ -188,12 +192,12 @@ co_error_t co_channel_recv(co_channel_t *ch, void *data) {
         return CO_OK;
     }
 
-    /* 3. channel 已关闭且缓冲区空 */
+    /* 3. Channel is closed and the buffer is empty */
     if (ch->closed) {
         return CO_ERROR_CLOSED;
     }
 
-    /* 4. 阻塞：挂起当前协程，等待发送者来唤醒 */
+    /* 4. Suspend until a sender wakes the current coroutine */
     co_scheduler_t *sched   = co_current_scheduler();
     co_routine_t   *current = co_current_routine();
     if (!sched || !current) {
@@ -243,11 +247,11 @@ co_error_t co_channel_tryrecv(co_channel_t *ch, void *data) {
     if (ch->closed) {
         return CO_ERROR_CLOSED;
     }
-    return CO_ERROR_BUSY;   /* 空且无等待 sender */
+    return CO_ERROR_BUSY;   /* Empty and no sender is waiting */
 }
 
 // ============================================================================
-// 关闭 / 状态查询
+// Close and state queries
 // ============================================================================
 
 co_error_t co_channel_close(co_channel_t *ch) {
@@ -260,8 +264,8 @@ co_error_t co_channel_close(co_channel_t *ch) {
     ch->closed = true;
 
     /*
-     * 唤醒所有等待的接收者，它们醒来后会读到 CO_ERROR_CLOSED。
-     * 等待的发送者同理（向已关闭 channel 发送返回错误）。
+     * Wake all waiting receivers so they observe CO_ERROR_CLOSED.
+     * Waiting senders behave similarly and fail when sending to a closed channel.
      */
     co_queue_node_t *node;
     while ((node = co_queue_pop_front(&ch->recv_queue)) != NULL) {

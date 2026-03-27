@@ -1,6 +1,6 @@
 /**
  * @file channel.hpp
- * @brief co::Channel<T> — Go-style typed channel for inter-coroutine communication.
+ * @brief co::Channel<T> - Go-style typed channel for inter-coroutine communication.
  *
  * Wraps co_channel_t with a type-safe C++ interface.
  *
@@ -52,7 +52,7 @@ public:
     Channel(const Channel&) = delete;
     Channel& operator=(const Channel&) = delete;
 
-    // ── Send ─────────────────────────────────────────────────────────────────
+    // Send
 
     /**
      * @brief Send a value (blocks until space is available or a receiver is ready).
@@ -85,7 +85,7 @@ public:
      */
     void close() { co_channel_close(ch_); }
 
-    // ── Receive ──────────────────────────────────────────────────────────────
+    // Receive
 
     /**
      * @brief Receive a value (blocks until data is available or the channel closes).
@@ -108,7 +108,7 @@ public:
         return std::nullopt;
     }
 
-    // ── State ────────────────────────────────────────────────────────────────
+    // State
 
     size_t len()       const { return co_channel_len(ch_); }
     size_t capacity()  const { return co_channel_cap(ch_); }
@@ -116,7 +116,7 @@ public:
 
     co_channel_t* native_handle() noexcept { return ch_; }
 
-    // ── Range-for support ────────────────────────────────────────────────────
+    // Range-for support
 
     /// Sentinel type (C++17 compatible, does not require std::default_sentinel_t).
     struct Sentinel {};

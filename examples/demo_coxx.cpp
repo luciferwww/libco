@@ -1,14 +1,14 @@
 ﻿/**
  * @file demo_coxx.cpp
- * @brief libcoxx C++ API 综合演示
+ * @brief Comprehensive libcoxx C++ API demo
  *
- * 演示以下功能：
- *   1. Scheduler + Task::join()          -- 等待协程完成并获取结果
- *   2. WaitGroup                          -- 并发任务屏障
- *   3. Mutex + std::lock_guard            -- 临界区保护
- *   4. Channel<T>（带缓冲 + 无缓冲）      -- 生产者/消费者
- *   5. CondVar + wait_for 超时            -- 定时通知
- *   6. 异常传播                           -- Task::join() 重抛协程内异常
+ * Demonstrates the following features:
+ *   1. Scheduler + Task::join()          -- wait for coroutines to finish
+ *   2. WaitGroup                         -- barrier for concurrent tasks
+ *   3. Mutex + std::lock_guard           -- critical-section protection
+ *   4. Channel<T> (buffered and unbuffered) -- producer/consumer patterns
+ *   5. CondVar + wait_for timeout        -- timed notification
+ *   6. Exception propagation             -- Task::join() rethrows coroutine exceptions
  */
 
 #include <coxx/coxx.hpp>
@@ -17,7 +17,7 @@
 #include <stdexcept>
 
 // ============================================================================
-// 示例 1：Task::join()  顺序等待三个并发协程的结果
+// Demo 1: Task::join() waits for three concurrent coroutines in sequence
 // ============================================================================
 
 static void demo_task_join(co::Scheduler& sched) {
@@ -29,7 +29,8 @@ static void demo_task_join(co::Scheduler& sched) {
     auto t1 = sched.spawn([&] { results[1] = 20; });
     auto t2 = sched.spawn([&] { results[2] = 30; });
 
-    // join() 在协程内部调用：挂起当前协程，等目标完成后再恢复
+    // join() is called inside a coroutine: suspend until the target completes,
+    // then resume the current coroutine.
     t0.join();
     t1.join();
     t2.join();
@@ -39,7 +40,7 @@ static void demo_task_join(co::Scheduler& sched) {
 }
 
 // ============================================================================
-// 示例 2：WaitGroup  N 个并发任务全部完成后再继续
+// Demo 2: WaitGroup waits until all N concurrent tasks are complete
 // ============================================================================
 
 static void demo_waitgroup(co::Scheduler& sched) {
@@ -50,11 +51,12 @@ static void demo_waitgroup(co::Scheduler& sched) {
     int squares[N] = {};
 
     for (int i = 0; i < N; i++) {
-        // 正确顺序：先 spawn 后 add。
-        // 若 spawn 本身抛异常（内存不足等），wg 计数未递增，wg.wait() 不会死锁。
+        // Correct order: spawn first, then add.
+        // If spawn itself throws, the WaitGroup count is not incremented and
+        // wg.wait() cannot deadlock.
         sched.spawn([i, &squares, &wg] {
-            // RAII guard：无论协程正常返回还是抛异常，析构时都保证调用 done()，
-            // 防止 wg.wait() 因计数永不归零而死锁。
+            // RAII guard: call done() during destruction whether the coroutine
+            // returns normally or throws, preventing wg.wait() from deadlocking.
             struct DoneGuard {
                 co::WaitGroup& wg;
                 ~DoneGuard() { wg.done(); }
@@ -62,7 +64,7 @@ static void demo_waitgroup(co::Scheduler& sched) {
 
             squares[i] = (i + 1) * (i + 1);
         });
-        wg.add();   // spawn 成功后再递增计数
+        wg.add();   // Increment the count only after spawn succeeds
     }
 
     sched.spawn([&] {
@@ -75,7 +77,7 @@ static void demo_waitgroup(co::Scheduler& sched) {
 }
 
 // ============================================================================
-// 示例 3：Mutex + std::lock_guard  并发递增共享计数器
+    // Demo 3: Mutex + std::lock_guard protect a shared counter during increments
 // ============================================================================
 
 static void demo_mutex(co::Scheduler& sched) {
@@ -88,11 +90,10 @@ static void demo_mutex(co::Scheduler& sched) {
     const int ITERS   = 100;
 
     for (int i = 0; i < WORKERS; i++) {
-        // 正确顺序：先 spawn（可能抛异常），成功后再 add。
-        // 这样 spawn 失败时 wg 计数不会被污染，wg.wait() 不会死锁。
+        // Correct order: spawn first because it may throw, then add after success.
+        // This keeps the WaitGroup count consistent and avoids deadlock.
         sched.spawn([&] {
-            // RAII guard：无论协程如何退出（正常/异常），done() 都会执行，
-            // 防止 wg.wait() 因计数永不归零而死锁。
+            // RAII guard: done() is always called, even on exceptions.
             struct DoneGuard {
                 co::WaitGroup& wg;
                 ~DoneGuard() { wg.done(); }
@@ -103,7 +104,7 @@ static void demo_mutex(co::Scheduler& sched) {
                 counter++;
             }
         });
-        wg.add();   // spawn 成功后再递增计数
+        wg.add();   // Increment the count only after spawn succeeds
     }
 
     sched.spawn([&] {
@@ -113,7 +114,7 @@ static void demo_mutex(co::Scheduler& sched) {
 }
 
 // ============================================================================
-// 示例 4：Channel<int> 带缓冲  生产者/消费者
+// Demo 4: Buffered Channel<int> producer/consumer example
 // ============================================================================
 
 static void demo_channel_buffered(co::Scheduler& sched) {
@@ -135,7 +136,7 @@ static void demo_channel_buffered(co::Scheduler& sched) {
 }
 
 // ============================================================================
-// 示例 5：Channel<int> 无缓冲（rendezvous）
+// Demo 5: Unbuffered Channel<int> rendezvous example
 // ============================================================================
 
 static void demo_channel_rendezvous(co::Scheduler& sched) {
@@ -159,7 +160,7 @@ static void demo_channel_rendezvous(co::Scheduler& sched) {
 }
 
 // ============================================================================
-// 示例 6：CondVar + wait_for 超时  限时等待通知
+// Demo 6: CondVar + wait_for timeout for timed notifications
 // ============================================================================
 
 static void demo_condvar_timeout(co::Scheduler& sched) {
@@ -169,7 +170,7 @@ static void demo_condvar_timeout(co::Scheduler& sched) {
     co::CondVar cv;
     bool        ready = false;
 
-    // 通知方：50ms 后发出信号
+    // Notifier: send a signal after 50 ms
     auto notifier = sched.spawn([&] {
         co_sleep(50);
         {
@@ -179,7 +180,7 @@ static void demo_condvar_timeout(co::Scheduler& sched) {
         cv.notify_one();
     });
 
-    // 等待方：最多等 200ms
+    // Waiter: wait at most 200 ms
     auto waiter = sched.spawn([&] {
         std::unique_lock<co::Mutex> ul(mtx);
         bool ok = cv.wait_for(ul, 200, [&] { return ready; });
@@ -187,11 +188,11 @@ static void demo_condvar_timeout(co::Scheduler& sched) {
     });
 
     waiter.join();
-    notifier.join();  // 确保 notifier 已完成，避免局部变量悬空
+    notifier.join();  // Ensure the notifier finished before locals go out of scope
 }
 
 // ============================================================================
-// 示例 7：异常传播  join() 重新抛出协程内部异常
+// Demo 7: Exception propagation through join()
 // ============================================================================
 
 static void demo_exception(co::Scheduler& sched) {
@@ -215,7 +216,8 @@ static void demo_exception(co::Scheduler& sched) {
 int main() {
     co::Scheduler sched;
 
-    // 所有 demo 在同一顶层协程内顺序执行（join() 只能从协程上下文调用）
+    // Run all demos in one top-level coroutine because join() must be called
+    // from coroutine context.
     sched.spawn([&] {
         demo_task_join(sched);
         demo_waitgroup(sched);
