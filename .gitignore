@@ -1,0 +1,86 @@
+# Build directories
+build/
+build-*/
+build_*/
+cmake-build-*/
+out/
+
+# IDEs
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.swp
+*.swo
+*~
+
+# Compiled files
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.out
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+*.cmake
+!CMakeLists.txt
+!cmake/*.cmake
+Makefile
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# Testing
+Testing/
+*.gcov
+*.gcda
+*.gcno
+coverage/
+coverage.info
+coverage_report/
+
+# Benchmarks
+*.bench
+benchmark_results/
+
+# Documentation
+docs/html/
+docs/latex/
+Doxyfile.bak
+
+# Package managers
+vcpkg_installed/
+conan_cache/
+
+# OS specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temp files
+*.bak
+*.tmp
+*.log
+*.stackdump
+
+# Python (if using scripts)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Profiling
+*.prof
+perf.data
+perf.data.old
+*.out.dSYM/
