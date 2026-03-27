@@ -4,6 +4,13 @@
 [![Version](https://img.shields.io/badge/version-2.0.0-green.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey.svg)]()
 
+> [!NOTE]
+> **项目背景**
+>
+> 本项目脱胎于作者十余年前未竟的旧项目
+> [Lucifer-YU/coroutine](https://github.com/Lucifer-YU/coroutine)，
+> 由 AI 全程重新设计并实现，人工参与以审核代码和确定关键决策为主。
+
 > 一个现代化、跨平台、高性能的 C17 stackful 协程库，附带完整的 C++17 封装。
 
 ---
