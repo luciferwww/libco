@@ -85,13 +85,13 @@ protected:
 };
 
 TEST_F(SchedulerTest, CreateDestroy) {
-    cxx_co::Scheduler sched;
+    co::Scheduler sched;
     // 应该能正常创建和销毁
     SUCCEED();
 }
 
 TEST_F(SchedulerTest, SpawnSimpleCoroutine) {
-    cxx_co::Scheduler sched;
+    co::Scheduler sched;
     bool executed = false;
     
     sched.spawn([&] {
@@ -278,43 +278,16 @@ void test_context_switch_performance() {
 
 ### 基准测试框架
 
-使用 Google Benchmark：
+使用纯 C 实现的独立可执行程序（位于 `benchmarks/` 目录），通过 `-DLIBCO_BUILD_BENCHMARKS=ON` 启用：
 
-```cpp
-// tests/benchmark/bench_context_switch.cpp
+| 文件 | 测量目标 | 目标值 |
+|------|----------|--------|
+| `bench_context_switch.c` | 单次上下文切换延迟 | < 50 ns |
+| `bench_spawn.c` | 协程创建开销 | < 1 μs |
+| `bench_channel.c` | 带缓冲 Channel 吞吐量 | > 10 M ops/s |
+| `bench_stress.c` | 10K 协程稳定性 | counter == N |
 
-#include <benchmark/benchmark.h>
-#include <libco/co.h>
-
-static void BM_ContextSwitch(benchmark::State& state) {
-    co_scheduler_t* sched = co_scheduler_create(NULL);
-    
-    int count = 0;
-    co_spawn(sched, [](void* arg) {
-        int* p = (int*)arg;
-        for (int i = 0; i < 1000; i++) {
-            (*p)++;
-            co_yield();
-        }
-    }, &count, 0);
-    
-    for (auto _ : state) {
-        co_scheduler_poll(sched, 0);
-    }
-    
-    co_scheduler_destroy(sched);
-    
-    state.SetItemsProcessed(state.iterations());
-}
-BENCHMARK(BM_ContextSwitch);
-
-static void BM_ChannelSendRecv(benchmark::State& state) {
-    // 测试 channel 性能
-}
-BENCHMARK(BM_ChannelSendRecv);
-
-BENCHMARK_MAIN();
-```
+每个 benchmark 自带 warmup、3 轮均值、PASS/FAIL 判断，退出码 0/1。
 
 ### 性能指标
 
@@ -347,9 +320,9 @@ valgrind \
 ```cmake
 # CMakeLists.txt
 
-option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
+option(LIBCO_ENABLE_ASAN "Enable AddressSanitizer" OFF)
 
-if(ENABLE_ASAN)
+if(LIBCO_ENABLE_ASAN)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
 endif()
@@ -357,7 +330,7 @@ endif()
 
 ```bash
 # 运行测试
-cmake -DENABLE_ASAN=ON ..
+cmake -DLIBCO_ENABLE_ASAN=ON ..
 make
 ./build/tests/unit/test_all
 ```
@@ -390,8 +363,8 @@ void co_routine_check_stack_canary(co_routine_t* co) {
 |----|----------|------|------|
 | Ubuntu 22.04 | GCC 11 | x86_64 | ✅ |
 | Ubuntu 22.04 | Clang 14 | x86_64 | ✅ |
-| macOS 13 | Clang | x86_64 | ✅ |
-| macOS 13 | Clang | ARM64 | ✅ |
+| macOS 13 | Clang | x86_64 | ⚠️ (context only, kqueue I/O 待实现) |
+| macOS 13 | Clang | ARM64 | ⚠️ (context only, kqueue I/O 待实现) |
 | Windows 11 | MSVC 2022 | x86_64 | ✅ |
 | Windows 11 | MinGW-w64 | x86_64 | ✅ |
 

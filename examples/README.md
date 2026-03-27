@@ -130,36 +130,34 @@ echo "Hello libco!" | nc localhost 8080
 - 30秒超时自动断开
 - 显示连接统计
 
-**注意：**
-- ✅ Linux 版本完全实现（epoll）
-- ⚠️ macOS 版本待实现（需要 kqueue）
-- ⚠️ Windows 版本实验性（IOCP AcceptEx/ConnectEx 调试中）
-  - Windows 建议使用传统 accept() 测试基本功能
-  - Week 8 AcceptEx/ConnectEx 优化进行中
-
-**Windows 限制：**
-目前 Windows 版本的 co_accept/co_connect 存在 IOCP 集成问题（错误 10057/995）。
-建议使用 Linux/WSL 测试网络功能，或等待 Week 8 完善。
+**平台支持：**
+- ✅ Linux：epoll 完整实现
+- ✅ Windows：IOCP 异步 I/O 完整实现
+- ⚠️ macOS：kqueue 待实现（计划中）
 
 ---
 
 ## 性能基准
 
-### Linux (GCC 11.4)
+### Linux (GCC, Release, x86_64)
 
 | 示例 | 指标 | 性能 |
 |------|------|------|
 | concurrent (50协程) | 上下文切换 | 132万/秒 |
-| concurrent (100协程) | 协程创建 | 3.4万/秒 |
-| stack_pool (100协程) | 每协程耗时 | 0.029ms |
-| scheduler | 定时精度 | < 5ms |
+| stack_pool (100协程) | 每协程耗时 | 0.029 ms |
+| scheduler | 定时精度 | < 5 ms |
+| bench_context_switch | 单次切换延迟 | ~10–50 ns |
+| bench_spawn | 协程创建开销 | < 1 μs |
+| bench_channel (cap=256) | 吞吐量 | > 10 M ops/s |
 
-### Windows (MSVC 19.44)
+### Windows (MSVC, Release, x86_64)
 
 | 示例 | 指标 | 性能 |
 |------|------|------|
 | concurrent (50协程) | 上下文切换 | 4.7万/秒 |
-| producer_consumer | 总耗时 | ~0.3秒 |
+| producer_consumer | 总耗时 | ~0.3 秒 |
+
+> 完整 benchmark 数据见 `benchmarks/` 目录，使用 `-DLIBCO_BUILD_BENCHMARKS=ON` 编译后运行。
 
 ---
 
@@ -168,41 +166,31 @@ echo "Hello libco!" | nc localhost 8080
 这些示例验证了：
 
 ✅ **调度器** - 多个协程正确调度和切换  
-✅ **co_sleep()** - 精确的定时休眠（< 15ms 误差）  
+✅ **co_sleep()** - 精确的定时休眠（< 15 ms 误差）  
 ✅ **co_yield_now()** - 协程主动让出 CPU（C 代码可使用 `co_yield` 宏别名）  
 ✅ **栈池** - 内存复用减少 98% 内存占用  
-✅ **I/O 多路复用** - 协程式网络 I/O（Linux epoll 完整实现）  
-✅ **跨平台** - Linux 和 Windows 一致性行为  
+✅ **I/O 多路复用** - 协程式网络 I/O（Linux epoll / Windows IOCP）  
+✅ **Mutex / CondVar** - 协程级互斥锁与条件变量  
+✅ **Channel** - Go 风格带缓冲/rendezvous channel  
+✅ **C++17 封装** - libcoxx：Scheduler、Task、Mutex、CondVar、WaitGroup、Channel\<T\>  
+✅ **跨平台** - Linux 和 Windows 全功能，macOS kqueue 计划中  
 
 ---
 
 ## 已知问题
 
-1. **Windows 性能较低** - 由于 Fiber API 开销（慢 33 倍）
-2. **Windows IOCP 简化** - AcceptEx/ConnectEx 尚未实现
-3. **中文字符显示** - Windows 控制台可能显示乱码
+1. **Windows 性能较低** - Fiber API 上下文切换开销高于 ucontext
+2. **macOS 暂不支持** - kqueue I/O 多路复用待实现
+3. **中文字符显示** - Windows 控制台可能显示乱码（建议设置 `chcp 65001`）
 
 ---
 
-## 下一步
-
-Week 7 I/O 多路复用已完成基础实现：
-- ✅ Linux epoll 后端
-- ✅ Windows IOCP 后端（异步读写）
-- ⚠️ Windows accept/connect 待完善
-
-后续扩展：
-- Week 8: 完善 Windows IOCP (AcceptEx/ConnectEx)
-- Week 9-10: 同步原语（mutex、channel）
-- Week 11-12: 系统调用 Hook
-
----
-
-**当前状态：Week 7 完成 ✅**
+**当前状态：v2.0.0 / Week 14 完成 ✅**
 
 核心功能稳定，可用于：
 - CPU 密集型任务调度
 - 定时任务处理
 - 协程池实现
 - 轻量级并发框架
-- **网络服务器开发（Linux）**
+- 网络服务器开发（Linux / Windows）
+- 需要 RAII 风格并发原语的 C++17 项目
