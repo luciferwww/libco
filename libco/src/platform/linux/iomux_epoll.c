@@ -350,6 +350,14 @@ static co_error_t co_wait_io(co_socket_t fd, uint32_t events, int64_t timeout_ms
         return CO_ERROR;
     }
     
+    // Normal completion: remove the timer from the heap to avoid holding the scheduler
+    // NOTE: Check !timed_out rather than io_waiting, because io_waiting may already be
+    // false if the I/O completed synchronously or if another thread modified it.
+    if (timeout_ms >= 0 && !current->timed_out) {
+        current->io_waiting = false;
+        co_timer_heap_remove(&sched->timer_heap, current);
+    }
+    
     return CO_OK;
 }
 

@@ -558,6 +558,13 @@ static co_error_t co_wait_io_async(co_socket_t fd, co_io_op_t op_type,
         return CO_ERROR;
     }
     
+    // If a timeout timer was registered, remove it since I/O completed normally
+    // NOTE: io_waiting may already be false (set by co_iomux_poll), so check !timed_out instead
+    if (timeout_ms >= 0 && !current->timed_out) {
+        current->io_waiting = false;
+        co_timer_heap_remove(&sched->timer_heap, current);
+    }
+    
     if (out_bytes_transferred) {
         *out_bytes_transferred = wait_ctx.bytes_transferred;
     }
@@ -644,9 +651,26 @@ co_socket_t co_accept(co_socket_t sockfd, void *addr, socklen_t *addrlen, int64_
     wait_ctx->routine = current;
     wait_ctx->accept_socket = client_fd;
     
+    // Initialize timeout state
+    current->timed_out = false;
+    current->io_waiting = false;
+
+    // Register a timeout timer if a deadline was requested
+    if (timeout_ms >= 0) {
+        current->wakeup_time = co_get_monotonic_time_ms() + (uint64_t)timeout_ms;
+        current->io_waiting = true;
+        if (!co_timer_heap_push(&sched->timer_heap, current)) {
+            current->io_waiting = false;
+            closesocket(client_fd);
+            free(wait_ctx);
+            return CO_INVALID_SOCKET;
+        }
+    }
+    
     // Try associating the listening socket with IOCP if it is not already associated
     if (co_iomux_add(sched->iomux, wait_ctx) != CO_OK) {
         fprintf(stderr, "Failed to associate listen socket\n");
+        current->io_waiting = false;  // Timer is in heap; clear flag to let timer handler skip
         closesocket(client_fd);
         free(wait_ctx);
         return CO_INVALID_SOCKET;
@@ -671,6 +695,7 @@ co_socket_t co_accept(co_socket_t sockfd, void *addr, socklen_t *addrlen, int64_
         DWORD error = WSAGetLastError();
         if (error != WSA_IO_PENDING) {
             fprintf(stderr, "AcceptEx failed immediately: %d\n", error);
+            current->io_waiting = false;
             closesocket(client_fd);
             free(wait_ctx);
             return CO_INVALID_SOCKET;
@@ -681,16 +706,43 @@ co_socket_t co_accept(co_socket_t sockfd, void *addr, socklen_t *addrlen, int64_
     current->state = CO_STATE_WAITING;
     sched->waiting_io_count++;
     
-    // Switch directly back to the scheduler and wait for IOCP completion.
+    // First swap: yield to the scheduler and wait for IOCP completion or timeout.
     // co_yield() cannot be used because it would requeue the coroutine.
     co_context_swap(&current->context, &sched->main_ctx);
     
-    // Once resumed, AcceptEx has completed
+    // -----------------------------------------------------------------------
+    // Timeout path
+    // -----------------------------------------------------------------------
+    if (current->timed_out) {
+        // Request cancellation of the AcceptEx operation
+        CancelIoEx((HANDLE)sockfd, &wait_ctx->overlapped);
+
+        current->state = CO_STATE_WAITING;
+        sched->waiting_io_count++;
+        co_context_swap(&current->context, &sched->main_ctx);
+
+        // Second resume: IOCP has delivered the cancellation completion packet
+        closesocket(client_fd);
+        free(wait_ctx);
+        WSASetLastError(WSAETIMEDOUT);
+        return CO_INVALID_SOCKET;
+    }
+    
+    // -----------------------------------------------------------------------
+    // Normal completion path
+    // -----------------------------------------------------------------------
     if (wait_ctx->revents & CO_IO_ERROR) {
         fprintf(stderr, "AcceptEx completed with error\n");
         closesocket(client_fd);
         free(wait_ctx);
         return CO_INVALID_SOCKET;
+    }
+    
+    // If a timeout timer was registered, remove it since accept completed normally
+    // NOTE: io_waiting may already be false (set by co_iomux_poll), so check !timed_out instead
+    if (timeout_ms >= 0 && !current->timed_out) {
+        current->io_waiting = false;
+        co_timer_heap_remove(&sched->timer_heap, current);
     }
     
     // AcceptEx succeeded, update the accepted socket context
@@ -780,8 +832,28 @@ int co_connect(co_socket_t sockfd, const void *addr, socklen_t addrlen, int64_t 
     wait_ctx->timeout_ms = timeout_ms;
     wait_ctx->routine = current;
     
+    // Initialize timeout state
+    current->timed_out = false;
+    current->io_waiting = false;
+
+    // Register a timeout timer if a deadline was requested
+    if (timeout_ms >= 0) {
+        current->wakeup_time = co_get_monotonic_time_ms() + (uint64_t)timeout_ms;
+        current->io_waiting = true;
+        if (!co_timer_heap_push(&sched->timer_heap, current)) {
+            current->io_waiting = false;
+            free(wait_ctx);
+            return -1;
+        }
+    }
+    
     // Associate the socket with the IOCP
-    co_iomux_add(sched->iomux, wait_ctx);
+    if (co_iomux_add(sched->iomux, wait_ctx) != CO_OK) {
+        fprintf(stderr, "Failed to associate socket with IOCP\n");
+        current->io_waiting = false;  // Timer is in heap; clear flag to let timer handler skip
+        free(wait_ctx);
+        return -1;
+    }
     
     // Submit the ConnectEx operation
     DWORD bytes_sent = 0;
@@ -800,6 +872,7 @@ int co_connect(co_socket_t sockfd, const void *addr, socklen_t addrlen, int64_t 
         DWORD error = WSAGetLastError();
         if (error != WSA_IO_PENDING) {
             fprintf(stderr, "ConnectEx failed: %d\n", error);
+            current->io_waiting = false;
             free(wait_ctx);
             return -1;
         }
@@ -809,14 +882,40 @@ int co_connect(co_socket_t sockfd, const void *addr, socklen_t addrlen, int64_t 
     current->state = CO_STATE_WAITING;
     sched->waiting_io_count++;
     
-    // Switch directly back to the scheduler and wait for IOCP completion.
+    // First swap: yield to the scheduler and wait for IOCP completion or timeout.
     // co_yield() cannot be used because it would requeue the coroutine.
     co_context_swap(&current->context, &sched->main_ctx);
     
-    // Once resumed, ConnectEx has completed
+    // -----------------------------------------------------------------------
+    // Timeout path
+    // -----------------------------------------------------------------------
+    if (current->timed_out) {
+        // Request cancellation of the ConnectEx operation
+        CancelIoEx((HANDLE)sockfd, &wait_ctx->overlapped);
+
+        current->state = CO_STATE_WAITING;
+        sched->waiting_io_count++;
+        co_context_swap(&current->context, &sched->main_ctx);
+
+        // Second resume: IOCP has delivered the cancellation completion packet
+        free(wait_ctx);
+        WSASetLastError(WSAETIMEDOUT);
+        return -1;
+    }
+    
+    // -----------------------------------------------------------------------
+    // Normal completion path
+    // -----------------------------------------------------------------------
     if (wait_ctx->revents & CO_IO_ERROR) {
         free(wait_ctx);
         return -1;
+    }
+    
+    // If a timeout timer was registered, remove it since connect completed normally
+    // NOTE: io_waiting may already be false (set by co_iomux_poll), so check !timed_out instead
+    if (timeout_ms >= 0 && !current->timed_out) {
+        current->io_waiting = false;
+        co_timer_heap_remove(&sched->timer_heap, current);
     }
     
     // ConnectEx succeeded, update the socket context

@@ -4,25 +4,6 @@
 # C Unit Tests (Unity)
 # ============================================================================
 
-# 示例测试 - C
-add_executable(test_example_c
-    test_example.c
-)
-
-target_link_libraries(test_example_c
-    PRIVATE
-        unity
-        co
-)
-
-target_include_directories(test_example_c
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/libco/include
-        ${CMAKE_BINARY_DIR}/include
-)
-
-add_test(NAME test_example_c COMMAND test_example_c)
-
 # 上下文切换测试 - C
 add_executable(test_context
     test_context.c
@@ -172,27 +153,6 @@ add_test(NAME test_sleep COMMAND test_sleep)
 # C++ Unit Tests (Google Test)
 # ============================================================================
 
-# 示例测试 - C++
-add_executable(test_example_cpp
-    test_example.cpp
-)
-
-target_link_libraries(test_example_cpp
-    PRIVATE
-        GTest::gtest
-        GTest::gtest_main
-        co
-)
-
-target_include_directories(test_example_cpp
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/libco/include
-        ${CMAKE_SOURCE_DIR}/libcoxx/include
-        ${CMAKE_BINARY_DIR}/include
-)
-
-add_test(NAME test_example_cpp COMMAND test_example_cpp)
-
 # 互斥锁测试 - C (Week 9)
 add_executable(test_mutex
     test_mutex.c
@@ -279,11 +239,57 @@ endif()
 
 add_test(NAME test_iocp_timeout COMMAND test_iocp_timeout)
 
+# epoll 超时测试 - C (Linux)
+# 在 Windows 平台，测试入口的 main() 会打印"跳过"后直接退出（返回 0），
+# 因此可跨平台注册而不会在 Windows 上失败。
+add_executable(test_epoll_timeout
+    test_epoll_timeout.c
+)
+
+target_link_libraries(test_epoll_timeout
+    PRIVATE
+        unity
+        co_static
+)
+
+target_include_directories(test_epoll_timeout
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/libco/include
+        ${CMAKE_SOURCE_DIR}/libco/src
+        ${CMAKE_BINARY_DIR}/include
+)
+
+add_test(NAME test_epoll_timeout COMMAND test_epoll_timeout)
+
+# Timer leak诊断测试 - C (跨平台)
+# 用于分析Windows/Linux平台的timer清理行为差异
+add_executable(test_timer_leak_diagnosis
+    test_timer_leak_diagnosis.c
+)
+
+target_link_libraries(test_timer_leak_diagnosis
+    PRIVATE
+        unity
+        co_static
+)
+
+target_include_directories(test_timer_leak_diagnosis
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/libco/include
+        ${CMAKE_SOURCE_DIR}/libco/src
+        ${CMAKE_BINARY_DIR}/include
+)
+
+if(WIN32)
+    target_link_libraries(test_timer_leak_diagnosis PRIVATE ws2_32)
+endif()
+
+add_test(NAME test_timer_leak_diagnosis COMMAND test_timer_leak_diagnosis)
+
 # ============================================================================
 # Google Test discovery (自动发现测试)
 # ============================================================================
 include(GoogleTest)
-gtest_discover_tests(test_example_cpp)
 
 # C++ 包装器测试 — Week 12 (Google Test)
 add_executable(test_coxx
