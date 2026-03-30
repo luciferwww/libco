@@ -10,8 +10,8 @@
 - ✅ **Stackful 协程**：支持在任意调用深度挂起和恢复
 - ✅ **跨平台支持**：Linux（epoll）✅、Windows（IOCP）✅；macOS 上下文切换已实现，kqueue I/O 待完成 ⏳
 - ✅ **高性能**：优化的上下文切换，内存池管理
-- ✅ **可定制**：支持自定义内存分配器、调度策略
-- ✅ **可选的系统调用 Hook**：透明化异步 I/O
+- ✅ **可定制**：支持自定义内存分配器（当前调度为 FIFO）
+- 🔷 **系统调用 Hook**：设计支持，当前未实现（可选特性）
 - ✅ **C++ 友好**：提供 RAII 和现代 C++ 便利接口
 
 ### 与 C++20 协程的区别
@@ -61,11 +61,13 @@
 
 ## 非目标
 
-以下不是本项目的目标：
+以下不是本项目的目标（或当前不包含的功能）：
 
 - ❌ 实现 C++20 协程语义（已有标准实现）
 - ❌ 提供完整的网络框架（只提供基础协程能力）
 - ❌ 支持所有操作系统（只聚焦主流平台）
+- ❌ 多种调度策略（v2.0 聚焦 FIFO，优先级/CFS 为可选扩展）
+- ❌ 系统调用 Hook（v2.0 未实现，预留扩展接口）
 
 ## 技术栈
 
@@ -81,36 +83,100 @@
 
 ```
 libco/
-├── docs/               # 文档
-│   ├── design/         # 设计文档
-│   ├── api/            # API 文档
-│   └── tutorial/       # 教程
+├── docs/                       # 文档
+│   └── design/                 # 设计文档（API文档和教程待开发）
 │
-├── libco/              # C 核心库
-│   ├── include/        # 公开头文件
-│   ├── src/            # 源代码
-│   └── CMakeLists.txt
-│
-├── libcoxx/            # C++ 扩展
-│   ├── include/
+├── libco/                      # C 核心库
+│   ├── include/libco/          # 公开头文件
+│   │   ├── co.h
+│   │   └── co_sync.h
 │   ├── src/
+│   │   ├── core/               # 核心组件（待开发）
+│   │   ├── platform/           # 平台抽象层
+│   │   │   ├── context.h
+│   │   │   ├── linux/
+│   │   │   │   ├── context.c
+│   │   │   │   └── iomux_epoll.c
+│   │   │   ├── macos/
+│   │   │   │   └── context.c
+│   │   │   └── windows/
+│   │   │       ├── context.c
+│   │   │       └── iomux_iocp.c
+│   │   ├── sync/               # 同步原语
+│   │   │   ├── co_channel.c/h
+│   │   │   ├── co_cond.c/h
+│   │   │   └── co_mutex.c/h
+│   │   ├── co_allocator.c/h    # 内存分配器
+│   │   ├── co_routine.c/h      # 协程管理
+│   │   ├── co_scheduler.c/h    # 调度器
+│   │   ├── co_stack_pool.c/h   # 栈池
+│   │   ├── co_timer.c/h        # 定时器
+│   │   └── co_*.h              # 其他内部头文件
 │   └── CMakeLists.txt
 │
-├── tests/              # 测试
-│   ├── unit/           # 单元测试
-│   ├── integration/    # 集成测试
+├── libcoxx/                    # C++ 扩展
+│   ├── include/coxx/
+│   │   ├── coxx.hpp            # 总头文件
+│   │   ├── scheduler.hpp       # Scheduler、Task
+│   │   ├── sync.hpp            # Mutex、CondVar、WaitGroup
+│   │   └── channel.hpp         # Channel<T>
+│   ├── src/
+│   │   ├── scheduler.cpp
+│   │   └── sync.cpp
+│   └── CMakeLists.txt
 │
-├── benchmarks/         # 性能基准测试
+├── tests/                      # 测试
+│   ├── unit/                   # 单元测试（13个测试文件）
+│   │   ├── test_allocator.c
+│   │   ├── test_channel.c
+│   │   ├── test_cond.c
+│   │   ├── test_context.c
+│   │   ├── test_coxx.cpp
+│   │   ├── test_iocp_timeout.c
+│   │   ├── test_mutex.c
+│   │   ├── test_routine.c
+│   │   ├── test_scheduler.c
+│   │   ├── test_sleep.c
+│   │   ├── test_stack_pool.c
+│   │   ├── test_timer.c
+│   │   └── CMakeLists.txt
+│   ├── integration/             # 集成测试
+│   │   ├── test_producer_consumer.c
+│   │   └── CMakeLists.txt
+│   └── CMakeLists.txt
 │
-├── examples/           # 示例代码
+├── benchmarks/                 # 性能基准测试
+│   ├── bench_channel.c
+│   ├── bench_context_switch.c
+│   ├── bench_spawn.c
+│   ├── bench_stress.c
+│   └── CMakeLists.txt
 │
-├── tools/              # 工具脚本
-│   ├── format.sh
-│   └── format.ps1
+├── examples/                   # 示例代码
+│   ├── demo_concurrent.c
+│   ├── demo_coxx.cpp
+│   ├── demo_echo_client.c
+│   ├── demo_echo_server.c
+│   ├── demo_producer_consumer.c
+│   ├── demo_scheduler.c
+│   ├── demo_stack_pool.c
+│   ├── README.md
+│   ├── advanced/               # 高级示例（待开发）
+│   ├── basic/                  # 基础示例（待开发）
+│   └── CMakeLists.txt
 │
-├── CMakeLists.txt      # 根 CMake
+├── tools/                      # 工具脚本
+│   ├── format.sh               # Linux/macOS 格式化脚本
+│   └── format.ps1              # Windows 格式化脚本
+│
+├── CMakeLists.txt              # 根 CMake
+├── config.h.in                 # 配置文件模板
+├── .clang-format               # 代码格式配置
+├── CHANGELOG.md
 ├── LICENSE
-└── README.md
+├── README.md
+├── run_tests_linux.sh          # Linux 测试脚本
+└── test_linux.sh               # Linux 测试辅助脚本
 ```
 
 ## 开发阶段

@@ -1,11 +1,14 @@
 # 实现细节
 
+> **版本说明**：本文档描述 libco v2.0 的实际实现细节。部分高级优化和设计理念作为未来参考保留。
+
 ## 上下文切换实现
 
 ### 1. Linux/macOS - ucontext 实现
 
 ```c
 // src/platform/linux/context.c
+// src/platform/macos/context.c
 
 #include <ucontext.h>
 
@@ -15,29 +18,44 @@ struct co_context {
     size_t stack_size;
 };
 
-int co_context_init(co_context_t* ctx, 
-                    void* stack_base,
-                    size_t stack_size,
-                    co_entry_func_t entry,
-                    void* arg) {
+co_error_t co_context_init(co_context_t* ctx, 
+                           void* stack_base,
+                           size_t stack_size,
+                           co_entry_func_t entry,
+                           void* arg) {
+    // 保存栈信息
+    ctx->stack_base = stack_base;
+    ctx->stack_size = stack_size;
+    
+    // 存储 entry 和 arg 到栈顶供 wrapper 访问
+    co_entry_func_t *entry_ptr = (co_entry_func_t *)stack_base;
+    void **arg_ptr = (void **)((char *)stack_base + sizeof(co_entry_func_t));
+    *entry_ptr = entry;
+    *arg_ptr = arg;
+    
+    // 捕获当前上下文
     if (getcontext(&ctx->uctx) == -1) {
         return CO_ERROR_PLATFORM;
     }
     
+    // 配置栈
     ctx->uctx.uc_stack.ss_sp = stack_base;
     ctx->uctx.uc_stack.ss_size = stack_size;
-    ctx->uctx.uc_link = NULL;
+    ctx->uctx.uc_link = NULL;  // 协程结束时不链接到任何上下文
     
-    makecontext(&ctx->uctx, (void (*)())entry, 1, arg);
-    
-    ctx->stack_base = stack_base;
-    ctx->stack_size = stack_size;
+    // 构建新上下文（使用 wrapper 适配调用约定）
+    uint32_t arg_low = (uint32_t)(uintptr_t)ctx;
+    uint32_t arg_high = (uint32_t)((uintptr_t)ctx >> 32);
+    makecontext(&ctx->uctx, (void (*)())ucontext_entry_wrapper, 2, arg_low, arg_high);
     
     return CO_OK;
 }
 
-int co_context_swap(co_context_t* from, co_context_t* to) {
-    return swapcontext(&from->uctx, &to->uctx) == 0 ? CO_OK : CO_ERROR_PLATFORM;
+co_error_t co_context_swap(co_context_t* from, co_context_t* to) {
+    if (swapcontext(&from->uctx, &to->uctx) == -1) {
+        return CO_ERROR_PLATFORM;
+    }
+    return CO_OK;
 }
 ```
 
@@ -246,40 +264,52 @@ sequenceDiagram
     Co->>Co: 处理接收到的数据
 ```
 
-**I/O Hook 机制**：
+**I/O 等待机制（v2.0 实现）**：
+
+> **注意**：v2.0 **未实现完整的 Hook 系统**。实际使用显式的协程 I/O API。
+
 ```c
-// 实际的 read() hook 实现
-ssize_t read(int fd, void* buf, size_t count) {
-    if (!co_is_hooked() || !co_fd_is_nonblocking(fd)) {
-        return __real_read(fd, buf, count);  // 调用真实系统调用
-    }
-    
-    // 设置非阻塞
-    co_fd_set_nonblock(fd);
-    
-    // 尝试立即读取
-    ssize_t ret = __real_read(fd, buf, count);
-    if (ret >= 0 || errno != EAGAIN) {
-        return ret;  // 成功读取或发生错误
-    }
-    
-    // EAGAIN：暂无数据，注册 I/O 事件并等待
+// v2.0 实际实现：显式协程 I/O API (libco/include/libco/co.h)
+ssize_t co_read_timeout(co_socket_t fd, void* buf, size_t len, int timeout_ms);
+ssize_t co_write_timeout(co_socket_t fd, const void* buf, size_t len, int timeout_ms);
+co_socket_t co_accept_timeout(co_socket_t listen_fd, struct sockaddr* addr, 
+                              socklen_t* addrlen, int timeout_ms);
+
+// 典型的协程 I/O 等待流程（以 co_wait_io 为例）
+co_error_t co_wait_io(co_socket_t fd, co_io_event_t events, int timeout_ms) {
     co_scheduler_t* sched = co_current_scheduler();
     co_routine_t* co = co_current_routine();
     
-    co_iomux_add(sched->iomux, fd, CO_EVENT_READ, co);
+    // 注册 I/O 事件到多路复用器
+    co_io_wait_ctx_t wait_ctx = {
+        .routine = co,
+        .fd = fd,
+        .events = events,
+        .revents = 0
+    };
+    co_iomux_add(sched->iomux, &wait_ctx);
     
-    // 必须用 co_context_swap() 直接切回调度器，不能用 co_yield_now()。
-    // co_yield_now() 会无条件将协程加回 ready_queue，
-    // 调度器就不会调用 co_iomux_poll()。
+    // 设置超时定时器（如果需要）
+    if (timeout_ms >= 0) {
+        co->wakeup_time = co_get_monotonic_time_ms() + timeout_ms;
+        co_timer_heap_push(&sched->timer_heap, co);
+        co->io_waiting = true;
+    }
+    
+    // 挂起协程，必须用 co_context_swap 切回调度器
     co->state = CO_STATE_WAITING;
     sched->waiting_io_count++;
     co_context_swap(&co->context, &sched->main_ctx);
     
-    // 被唤醒后，数据已就绪
-    return __real_read(fd, buf, count);
+    // 被唤醒后检查是否超时
+    return co->timed_out ? CO_ERROR_TIMEOUT : CO_OK;
 }
 ```
+
+**为什么不能用 co_yield_now()？**
+- `co_yield_now()` 会将协程重新加入就绪队列（`CO_STATE_READY`）
+- 这会导致调度器立即再次调度该协程，陷入忙等待
+- 必须使用 `co_context_swap()` 并保持 `CO_STATE_WAITING` 状态
 
 **多路复用选择**：
 - **Linux**: `epoll` (边缘触发，高效)
@@ -306,36 +336,42 @@ ssize_t read(int fd, void* buf, size_t count) {
 ### 核心数据结构
 
 ```c
-// src/co_sched.c
+// src/co_scheduler.h (v2.0 实际实现)
 
 struct co_scheduler {
-    // 主上下文
-    co_context_t main_ctx;
-    
-    // 当前运行协程
-    co_routine_t* current;
-    
-    // 就绪队列（双向链表）
+    // 就绪队列（FIFO 侵入式链表）
     co_queue_t ready_queue;
     
-    // 睡眠队列（最小堆）
-    co_timer_heap_t sleep_heap;
+    // 定时器堆（Week 6: 用于睡眠协程）
+    co_timer_heap_t timer_heap;
     
-    // I/O 多路复用
-    co_iomux_t* iomux;
+    // I/O 多路复用（Week 7）
+    co_iomux_t *iomux;  // epoll/kqueue/IOCP
     
-    // 栈池
-    co_stack_pool_t* stack_pool;
+    // 当前运行协程
+    co_routine_t *current;
+    
+    // 主调度器上下文
+    co_context_t main_ctx;
+    
+    // 栈池（Week 5）
+    co_stack_pool_t *stack_pool;
     
     // 配置
-    co_sched_config_t config;
+    size_t default_stack_size;  // 默认栈大小
     
-    // 统计
-    co_stats_t stats;
+    // 运行时状态
+    bool running;        // 调度器是否正在运行
+    bool should_stop;    // 是否应该停止
     
-    // 状态标志
-    int running;
-    int stopped;
+    // 统计信息（分散字段，v2.0 无独立 co_stats_t 结构）
+    uint64_t total_routines;    // 总创建协程数
+    uint64_t active_routines;   // 当前活跃协程数
+    uint64_t switch_count;      // 上下文切换次数
+    uint32_t waiting_io_count;  // 等待 I/O 的协程数
+    
+    // ID 生成器
+    uint64_t next_id;           // 下一个协程 ID
 };
 
 // 队列实现（侵入式双向链表）
@@ -379,76 +415,128 @@ static inline co_routine_t* co_queue_pop(co_queue_t* q) {
 ### 调度循环
 
 ```c
+// src/co_scheduler.c (v2.0 实际实现)
+
 co_error_t co_scheduler_run(co_scheduler_t* sched) {
-    sched->running = 1;
-    sched->stopped = 0;
-    
-    while (sched->running && !sched->stopped) {
-        // 1. 检查定时器，唤醒到期的协程
-        uint64_t now_ms = get_monotonic_time_ms();
-        while (sched->sleep_heap.count > 0) {
-            co_routine_t* co = co_timer_heap_peek(&sched->sleep_heap);
-            if (co->wakeup_time > now_ms) {
-                break;
-            }
-            co_timer_heap_pop(&sched->sleep_heap);
-            co->state = CO_STATE_READY;
-            co_queue_push(&sched->ready_queue, co);
-        }
-        
-        // 2. 计算下一次定时器到期时间
-        int timeout_ms = -1;
-        if (sched->sleep_heap.count > 0) {
-            co_routine_t* next = co_timer_heap_peek(&sched->sleep_heap);
-            timeout_ms = (int)(next->wakeup_time - now_ms);
-            if (timeout_ms < 0) timeout_ms = 0;
-        }
-        
-        // 3. 等待 I/O 事件
-        // 只有存在等待 I/O 的协程时才调用 co_iomux_poll()，
-        // 否则 ready_queue 和 timer_heap 均为空意味着所有协程已完成。
-        if (sched->iomux && (sched->waiting_io_count > 0 ||
-                             !co_timer_heap_empty(&sched->timer_heap))) {
-            co_iomux_poll(sched->iomux, timeout_ms);
-        }
-        
-        // 4. 调度就绪协程
-        co_routine_t* co = co_queue_pop(&sched->ready_queue);
-        if (!co) {
-            // 没有就绪协程
-            if (sched->stats.active_routines == 0 && sched->waiting_io_count == 0) {
-                // 所有协程都结束了
-                break;
-            }
-            // 等待事件
-            continue;
-        }
-        
-        // 5. 切换到协程
-        sched->current = co;
-        co->state = CO_STATE_RUNNING;
-        
-        co_context_swap(&sched->main_ctx, &co->context);
-        
-        // 协程返回
-        sched->current = NULL;
-        
-        // 6. 处理协程状态
-        if (co->state == CO_STATE_DEAD) {
-            // 协程结束，回收资源
-            co_routine_destroy(co);
-            sched->stats.total_routines_destroyed++;
-            sched->stats.active_routines--;
-        } else if (co->state == CO_STATE_READY) {
-            // 重新入队
-            co_queue_push(&sched->ready_queue, co);
-        }
-        // WAITING 状态的协程在等待队列中
-        
-        sched->stats.total_switches++;
+    if (!sched || sched->running) {
+        return CO_ERROR_INVAL;
     }
     
-    sched->running = 0;
+    // 设置为当前调度器
+    g_current_scheduler = sched;
+    sched->running = true;
+    sched->should_stop = false;
+    
+    // 主循环：持续调度直到所有协程完成或请求停止
+    while (!sched->should_stop) {
+        // 1. 检查定时器，唤醒到期的协程
+        uint64_t now = co_get_monotonic_time_ms();
+        while (!co_timer_heap_empty(&sched->timer_heap)) {
+            co_routine_t* routine = co_timer_heap_peek(&sched->timer_heap);
+            if (routine->wakeup_time > now) {
+                break;  // 堆顶未到期，后续条目也不可能到期
+            }
+            
+            co_timer_heap_pop(&sched->timer_heap);
+            
+            // 过滤已被 signal/broadcast 恢复的陈旧定时器事件
+            if (routine->state != CO_STATE_WAITING) {
+                continue;
+            }
+            
+            // co_cond_timedwait 超时：从条件变量等待队列移除
+            if (routine->cond_wait_queue != NULL) {
+                co_queue_remove(routine->cond_wait_queue, &routine->queue_node);
+                routine->timed_out = true;
+                routine->cond_wait_queue = NULL;
+            } 
+            // I/O 超时
+            else if (routine->io_waiting) {
+                routine->io_waiting = false;
+                routine->timed_out = true;
+                sched->waiting_io_count--;
+                // co_wait_io 通过 co_iomux_del 清理
+            }
+            
+            co_scheduler_enqueue(sched, routine);
+        }
+        
+        // 2. 如果没有就绪协程，确定是否需要等待
+        if (co_queue_empty(&sched->ready_queue)) {
+            int io_timeout_ms = -1;  // 默认：无限等待
+            
+            // 如果有睡眠的协程，计算下一个唤醒截止时间
+            if (!co_timer_heap_empty(&sched->timer_heap)) {
+                co_routine_t* next_wakeup = co_timer_heap_peek(&sched->timer_heap);
+                int64_t wait_ms = (int64_t)(next_wakeup->wakeup_time - now);
+                io_timeout_ms = (wait_ms > 0) ? (int)wait_ms : 0;
+            }
+            
+            // 3. 轮询 I/O 事件（带超时）
+            // 仅当有 I/O 等待者或定时器时才轮询，否则所有工作已完成
+            if (sched->waiting_io_count > 0 || !co_timer_heap_empty(&sched->timer_heap)) {
+                int ready_count = 0;
+                co_iomux_poll(sched->iomux, io_timeout_ms, &ready_count);
+                // I/O 就绪的协程已自动重新入队
+            }
+            
+            // 重新检查就绪队列
+            if (co_queue_empty(&sched->ready_queue)) {
+                // 仍然没有就绪协程；如果没有定时器则退出
+                if (co_timer_heap_empty(&sched->timer_heap)) {
+                    break;  // 没有协程在运行或等待
+                }
+            }
+            
+            continue;  // 继续循环，重新检查定时器和就绪协程
+        }
+        
+        // 4. 调度一个协程
+        co_error_t err = co_scheduler_schedule(sched);
+        if (err != CO_OK) {
+            sched->running = false;
+            g_current_scheduler = NULL;
+            return err;
+        }
+    }
+    
+    sched->running = false;
+    g_current_scheduler = NULL;
+    return CO_OK;
+}
+
+// ============================================================================
+// 调度逻辑
+// ============================================================================
+
+co_error_t co_scheduler_schedule(co_scheduler_t* sched) {
+    // 从就绪队列弹出下一个协程
+    co_routine_t* next = co_scheduler_dequeue(sched);
+    if (!next) {
+        return CO_OK;  // 没有可运行的协程
+    }
+    
+    // 设置当前协程
+    sched->current = next;
+    next->state = CO_STATE_RUNNING;
+    sched->switch_count++;
+    
+    // 切换到协程
+    co_context_swap(&sched->main_ctx, &next->context);
+    
+    // 协程返回后的处理
+    sched->current = NULL;
+    
+    if (next->state == CO_STATE_DEAD) {
+        // 协程结束，回收资源
+        co_routine_destroy(next);
+        sched->active_routines--;
+    } else if (next->state == CO_STATE_READY) {
+        // 重新入队（co_yield_now 的情况）
+        co_scheduler_enqueue(sched, next);
+    }
+    // CO_STATE_WAITING 状态的协程在等待队列中，不需要处理
+    
     return CO_OK;
 }
 ```
@@ -456,17 +544,21 @@ co_error_t co_scheduler_run(co_scheduler_t* sched) {
 ### co_yield_now 实现
 
 ```c
+// libco/include/libco/co.h
+
 co_error_t co_yield_now(void) {
-    co_scheduler_t* sched = co_scheduler_self();
-    if (!sched || !sched->current) {
-        return CO_ERROR_STATE;
+    co_scheduler_t* sched = co_current_scheduler();
+    co_routine_t* current = co_current_routine();
+    
+    if (!sched || !current) {
+        return CO_ERROR_INVAL;
     }
     
-    co_routine_t* co = sched->current;
-    co->state = CO_STATE_READY;
+    // 设置状态为 READY，将在调度器返回后重新入队
+    current->state = CO_STATE_READY;
     
-    // 切换回调度器
-    co_context_swap(&co->context, &sched->main_ctx);
+    // 切换回调度器主上下文
+    co_context_swap(&current->context, &sched->main_ctx);
     
     return CO_OK;
 }
@@ -475,32 +567,38 @@ co_error_t co_yield_now(void) {
 ### co_sleep 实现
 
 ```c
+// libco/src/co_scheduler.c
+
 co_error_t co_sleep(uint32_t msec) {
     if (msec == 0) {
-        return co_yield_now();
+        return co_yield_now();  // 0ms 睡眠等同于 yield
     }
     
-    co_scheduler_t* sched = co_scheduler_self();
-    if (!sched || !sched->current) {
-        return CO_ERROR_STATE;
+    co_scheduler_t* sched = co_current_scheduler();
+    co_routine_t* current = co_current_routine();
+    
+    if (!sched || !current) {
+        return CO_ERROR_INVAL;
     }
     
-    co_routine_t* co = sched->current;
+    // 计算唤醒时间（绝对时间戳）
+    uint64_t now = co_get_monotonic_time_ms();
+    current->wakeup_time = now + msec;
     
-    // 设置唤醒时间
-    uint64_t now_ms = get_monotonic_time_ms();
-    co->wakeup_time = now_ms + msec;
+    // 加入定时器堆
+    current->state = CO_STATE_WAITING;
+    co_timer_heap_push(&sched->timer_heap, current);
     
-    // 加入睡眠队列
-    co->state = CO_STATE_WAITING;
-    co_timer_heap_push(&sched->sleep_heap, co);
-    
-    // 切换回调度器
-    co_context_swap(&co->context, &sched->main_ctx);
+    // 切换回调度器（不设置 READY 状态）
+    co_context_swap(&current->context, &sched->main_ctx);
     
     return CO_OK;
 }
 ```
+
+**关键差异**：
+- `co_yield_now()`: 设置 `CO_STATE_READY`，调度器会重新入队
+- `co_sleep()`: 设置 `CO_STATE_WAITING`，只有定时器到期才唤醒
 
 ## 定时器堆实现
 
@@ -586,104 +684,144 @@ co_routine_t* co_timer_heap_pop(co_timer_heap_t* h) {
 ### Linux - epoll
 
 ```c
-// src/platform/linux/iomux_epoll.c
+// src/platform/linux/co_iomux_epoll.c
 
 #include <sys/epoll.h>
 
 struct co_iomux {
     int epfd;
     struct epoll_event* events;
-    size_t capacity;
-    // fd -> co_routine_t 映射
-    co_routine_t** fd_map;
-    size_t fd_map_size;
+    size_t max_events;
+    // fd -> wait_ctx 映射通过 epoll_event.data.ptr 管理
 };
 
-co_iomux_t* co_iomux_create(void) {
-    co_iomux_t* mux = malloc(sizeof(co_iomux_t));
-    
-    mux->epfd = epoll_create1(EPOLL_CLOEXEC);
-    mux->capacity = 64;
-    mux->events = malloc(sizeof(struct epoll_event) * mux->capacity);
-    mux->fd_map_size = 1024;
-    mux->fd_map = calloc(mux->fd_map_size, sizeof(co_routine_t*));
-    
-    return mux;
-}
+// v2.0 实际实现：使用 wait_ctx 结构管理等待状态
+typedef struct co_io_wait_ctx {
+    co_routine_t *routine;       // 等待的协程
+    co_socket_t fd;              // 等待的文件描述符
+    co_io_event_t events;        // 期待的事件
+    co_io_event_t revents;       // 实际发生的事件
+#ifdef _WIN32
+    OVERLAPPED overlapped;       // Windows IOCP 需要
+    DWORD bytes_transferred;     // 传输的字节数
+#endif
+} co_io_wait_ctx_t;
 
-int co_iomux_add(co_iomux_t* mux, int fd, co_io_event_t events, co_routine_t* co) {
-    if (fd >= mux->fd_map_size) {
-        // 扩展 fd_map
-        size_t new_size = fd * 2;
-        mux->fd_map = realloc(mux->fd_map, new_size * sizeof(co_routine_t*));
-        memset(mux->fd_map + mux->fd_map_size, 0, 
-               (new_size - mux->fd_map_size) * sizeof(co_routine_t*));
-        mux->fd_map_size = new_size;
-    }
+co_error_t co_iomux_add(co_iomux_t *mux, co_io_wait_ctx_t *wait_ctx) {
+    struct epoll_event ev = {0};
     
-    mux->fd_map[fd] = co;
+    if (wait_ctx->events & CO_IO_READ) ev.events |= EPOLLIN | EPOLLRDHUP;
+    if (wait_ctx->events & CO_IO_WRITE) ev.events |= EPOLLOUT;
+    ev.events |= EPOLLET;  // 边缘触发模式
+    ev.data.ptr = wait_ctx;  // 存储 wait_ctx 指针
     
-    struct epoll_event ev;
-    ev.events = 0;
-    if (events & CO_IO_READ) ev.events |= EPOLLIN;
-    if (events & CO_IO_WRITE) ev.events |= EPOLLOUT;
-    ev.data.fd = fd;
-    
-    return epoll_ctl(mux->epfd, EPOLL_CTL_ADD, fd, &ev);
+    return epoll_ctl(mux->epfd, EPOLL_CTL_ADD, wait_ctx->fd, &ev) == 0 
+           ? CO_OK : CO_ERROR_PLATFORM;
 }
 
 // Linux epoll 实现：ET 模式，data.ptr 存 wait_ctx，天然批量返回
-int co_iomux_poll(co_iomux_t* mux, int timeout_ms) {
-    int n = epoll_wait(mux->epfd, mux->events, mux->capacity, timeout_ms);
+int co_iomux_poll(co_iomux_t *mux, int timeout_ms, int *ready_count) {
+    int n = epoll_wait(mux->epfd, mux->events, mux->max_events, timeout_ms);
+    if (n < 0) return CO_ERROR_PLATFORM;
     
+    int woken = 0;
     for (int i = 0; i < n; i++) {
-        co_io_wait_ctx_t* wait_ctx = mux->events[i].data.ptr;
-        co_routine_t* co = wait_ctx->routine;
+        co_io_wait_ctx_t *wait_ctx = (co_io_wait_ctx_t *)mux->events[i].data.ptr;
+        if (!wait_ctx) continue;
         
-        if (co && co->state == CO_STATE_WAITING) {
-            // 唤醒协程
-            co->state = CO_STATE_READY;
-            // 通过 routine->scheduler 获取调度器，语义比
-            // co_current_scheduler() 更精确，不依赖全局变量。
-            co->scheduler->waiting_io_count--;
-            co_queue_push(&co->scheduler->ready_queue, co);
+        co_routine_t *co = wait_ctx->routine;
+        if (!co || co->state != CO_STATE_WAITING) continue;
+        
+        // 记录实际发生的事件
+        wait_ctx->revents = 0;
+        if (mux->events[i].events & (EPOLLIN | EPOLLRDHUP)) {
+            wait_ctx->revents |= CO_IO_READ;
         }
+        if (mux->events[i].events & EPOLLOUT) {
+            wait_ctx->revents |= CO_IO_WRITE;
+        }
+        if (mux->events[i].events & (EPOLLERR | EPOLLHUP)) {
+            wait_ctx->revents |= CO_IO_ERROR;
+        }
+        
+        // 唤醒协程：直接操作 scheduler 的 ready_queue
+        co->state = CO_STATE_READY;
+        co->io_waiting = false;
+        co->scheduler->waiting_io_count--;
+        co_queue_push_back(&co->scheduler->ready_queue, &co->queue_node);
+        woken++;
     }
     
-    return n;
+    if (ready_count) *ready_count = woken;
+    return CO_OK;
 }
+```
+
+### Windows - IOCP
+
+```c
+// src/platform/windows/co_iomux_iocp.c
+
+#include <winsock2.h>
+#include <windows.h>
+
+struct co_iomux {
+    HANDLE iocp;
+    OVERLAPPED_ENTRY *entries;
+    ULONG max_events;
+};
 
 // Windows IOCP 实现：使用 GetQueuedCompletionStatusEx（Vista+）批量取出完成包，
 // 与 epoll_wait 在"一次调用处理多个事件"的语义上对齐。
 // 通过 OVERLAPPED 成员偏移还原 wait_ctx 指针（CONTAINING_RECORD 风格）。
-// entries[i].Internal 存储 NTSTATUS，非 0 表示 I/O 操作失败。
-int co_iomux_poll(co_iomux_t* mux, int timeout_ms) {
+int co_iomux_poll(co_iomux_t *mux, int timeout_ms, int *ready_count) {
     ULONG removed = 0;
+    DWORD timeout = (timeout_ms < 0) ? INFINITE : (DWORD)timeout_ms;
+    
     BOOL ret = GetQueuedCompletionStatusEx(
         mux->iocp, mux->entries, mux->max_events,
-        &removed, timeout_ms < 0 ? INFINITE : timeout_ms, FALSE);
+        &removed, timeout, FALSE);
     
-    if (!ret) { return GetLastError() == WAIT_TIMEOUT ? 0 : -1; }
+    if (!ret) {
+        DWORD err = GetLastError();
+        if (err == WAIT_TIMEOUT) {
+            if (ready_count) *ready_count = 0;
+            return CO_OK;
+        }
+        return CO_ERROR_PLATFORM;
+    }
     
     int woken = 0;
     for (ULONG i = 0; i < removed; i++) {
-        co_io_wait_ctx_t* wait_ctx = CONTAINING_RECORD(
+        // 从 OVERLAPPED 还原 wait_ctx
+        co_io_wait_ctx_t *wait_ctx = CONTAINING_RECORD(
             mux->entries[i].lpOverlapped, co_io_wait_ctx_t, overlapped);
-        co_routine_t* co = wait_ctx->routine;
         
+        co_routine_t *co = wait_ctx->routine;
+        if (!co || co->state != CO_STATE_WAITING) continue;
+        
+        // 记录传输字节数和错误状态
         wait_ctx->bytes_transferred = mux->entries[i].dwNumberOfBytesTransferred;
-        if (mux->entries[i].Internal != 0) {   // NTSTATUS 非 0 = 失败
+        wait_ctx->revents = 0;
+        
+        // Internal 字段存储 NTSTATUS，非 0 表示错误
+        if (mux->entries[i].Internal != 0) {
             wait_ctx->revents |= CO_IO_ERROR;
+        } else {
+            // 根据操作类型设置事件标志
+            wait_ctx->revents |= (wait_ctx->events & (CO_IO_READ | CO_IO_WRITE));
         }
         
-        if (co && co->state == CO_STATE_WAITING) {
-            co->state = CO_STATE_READY;
-            co->scheduler->waiting_io_count--;
-            co_queue_push(&co->scheduler->ready_queue, co);
-            woken++;
-        }
+        // 唤醒协程
+        co->state = CO_STATE_READY;
+        co->io_waiting = false;
+        co->scheduler->waiting_io_count--;
+        co_queue_push_back(&co->scheduler->ready_queue, &co->queue_node);
+        woken++;
     }
-    return woken;
+    
+    if (ready_count) *ready_count = woken;
+    return CO_OK;
 }
 ```
 
@@ -865,37 +1003,38 @@ void co_stack_pool_free(co_stack_pool_t* pool, void* stack) {
 
 ## 性能优化技巧
 
-### 1. 内存对齐
+> **版本说明**：以下高级优化在 v2.0 中**未完全实现**，作为未来优化方向保留。
+
+### 1. 内存对齐（未实现）
 
 ```c
-// 确保关键结构体对齐到缓存行
+// 🔷 v2.0 未实现缓存行对齐
+// 未来可考虑对热路径结构体进行优化
+
 #define CACHE_LINE_SIZE 64
 
 struct co_routine {
     // 热数据（经常访问）
     co_state_t state;
     co_context_t context;
-    co_routine_t* next;
-    co_routine_t* prev;
     
-    // 填充到缓存行边界
-    char __padding1[CACHE_LINE_SIZE - 
-                    sizeof(co_state_t) - 
-                    sizeof(co_context_t) - 
-                    sizeof(void*) * 2];
+    // 填充到缓存行边界（未来优化）
+    // char __padding1[...];
     
-    // 冷数据（较少访问）
+    // 冷数据
     uint64_t id;
     void* stack_base;
-    size_t stack_size;
     // ...
-} __attribute__((aligned(CACHE_LINE_SIZE)));
+};
 ```
 
-### 2. 栈保护页
+### 2. 栈保护页（未实现）
 
 ```c
-// 在栈底部添加保护页，检测栈溢出
+// 🔷 v2.0 栈分配未使用保护页
+// 栈溢出检测依赖操作系统的段错误机制
+
+// 未来可考虑的实现：
 void* co_stack_alloc_protected(size_t size) {
     size_t page_size = sysconf(_SC_PAGESIZE);
     size_t total_size = size + page_size;
@@ -911,19 +1050,110 @@ void* co_stack_alloc_protected(size_t size) {
 }
 ```
 
-### 3. TLS 优化
+### 3. 实际实现的优化（v2.0）
+
+**栈池（Stack Pool）**：
+```c
+// ✅ v2.0 已实现栈重用机制
+struct co_stack_pool {
+    void **cached_stacks;
+    size_t count;
+    size_t capacity;
+    size_t stack_size;
+};
+```
+
+**侵入式队列**：
+```c
+// ✅ v2.0 使用侵入式链表，避免额外内存分配
+typedef struct co_queue_node {
+    struct co_queue_node *next;
+    struct co_queue_node *prev;
+} co_queue_node_t;
+
+struct co_routine {
+    co_queue_node_t queue_node;  // 嵌入队列节点
+    // ...
+};
+```
+
+### 3. 全局调度器访问（v2.0 实现）
 
 ```c
-// 使用 __thread 避免 pthread_getspecific 开销
-__thread co_scheduler_t* __tls_current_scheduler = NULL;
+// v2.0 使用简单的全局变量（非 TLS）
+// 每个线程只有一个调度器实例
+static co_scheduler_t *g_current_scheduler = NULL;
 
-static inline co_scheduler_t* co_scheduler_self(void) {
-    return __tls_current_scheduler;
+co_scheduler_t* co_current_scheduler(void) {
+    return g_current_scheduler;
 }
+
+// 注意：v2.0 不使用 __thread TLS
+// 未来版本可能添加多线程支持时才会使用 TLS
 ```
+
+## v2.0 实现总结
+
+### ✅ 已实现功能
+
+**核心机制**：
+- ✅ 上下文切换（ucontext/Fiber）
+- ✅ FIFO 就绪队列（侵入式链表）
+- ✅ 定时器最小堆（co_sleep 支持）
+- ✅ I/O 多路复用（epoll/kqueue/IOCP）
+- ✅ 栈池（Stack Pool）复用
+
+**同步原语**：
+- ✅ Mutex、CondVar（含 timedwait）
+- ✅ Channel（缓冲/非缓冲）
+- ✅ WaitGroup
+
+**平台支持**：
+- ✅ Linux（ucontext + epoll）
+- ✅ macOS（ucontext + kqueue）
+- ✅ Windows（Fiber + IOCP）
+
+### 🔷 未实现或简化的功能
+
+**高级调度**：
+- 🔷 优先级调度（仅 FIFO）
+- 🔷 抢占式调度
+- 🔷 co_scheduler_poll()（非阻塞迭代）
+
+**协程生命周期**：
+- 🔷 co_await() / co_routine_cancel()
+- 🔷 co_routine_detach()（C++ Task::detach() 已实现）
+- 🔷 协程返回值管理
+
+**系统集成**：
+- 🔷 完整的 Hook 系统（read/write 等）
+- 🔷 使用显式 co_read_timeout() 等 API
+
+**性能优化**：
+- 🔷 缓存行对齐
+- 🔷 栈保护页
+- 🔷 TLS（使用简单全局变量）
+
+**调试支持**：
+- 🔷 统计信息完整结构（字段分散）
+- 🔷 co_routine_name() 等调试 API
+- 🔷 死锁检测
+
+### 设计理念 vs 实际实现
+
+本文档保留了一些**设计理念和高级优化**的示例代码，这些内容：
+1. **展示了协程库的最佳实践**
+2. **为未来版本提供优化方向**
+3. **帮助理解核心概念**
+
+使用时请注意：
+- 标记为 🔷 的功能在 v2.0 中不可用
+- 实际 API 以头文件 `libco/include/libco/*.h` 为准
+- 性能优化建议可作为扩展参考
 
 ## 下一步
 
 参见：
+- [02-api-design.md](./02-api-design.md) - API 实现状态
 - [04-testing.md](./04-testing.md) - 测试策略
 - [05-build.md](./05-build.md) - 构建配置

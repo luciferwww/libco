@@ -1,5 +1,56 @@
 # API 设计文档
 
+> **版本说明**：本文档包含 libco v2.0 当前实现的 API（标记为 ✅）以及计划中的功能（标记为 🔷）。使用前请查看具体 API 的实现状态。
+
+## 实现状态总览
+
+### ✅ v2.0 已实现功能
+
+**核心功能**：
+- 调度器：创建/销毁/运行/停止（FIFO 策略）
+- 协程：spawn、yield、sleep、获取当前协程/调度器
+- I/O：co_read_timeout、co_write_timeout、co_accept_timeout、co_connect_timeout
+
+**同步原语（完整实现）**：
+- Mutex：创建/销毁/lock/trylock/unlock
+- Condition Variable：创建/销毁/wait/timedwait/signal/broadcast
+- Channel：创建/销毁/send/recv/trysend/tryrecv/close（支持缓冲/非缓冲）
+- WaitGroup：创建/销毁/add/done/wait
+
+**C++ 封装**：
+- RAII Scheduler、Mutex、LockGuard、Channel<T>
+- Lambda 协程支持
+
+### 🔷 计划功能（未实现）
+
+**高级调度**：
+- co_scheduler_poll()：非阻塞调度迭代
+- 优先级调度、抢占式调度
+
+**协程生命周期**：
+- co_await()、co_return()、co_result_t
+- co_routine_cancel()、co_routine_detach()
+- co_routine_set_name()、co_routine_id()、co_routine_state()
+
+**高级同步**：
+- co_select()：多路 channel 等待
+- co_tls_*：协程本地存储
+- co_group_*：协程组管理
+
+**系统集成**：
+- 系统调用 hooks（结构支持但未实现）
+- 通用 co_io_wait() API
+
+**调试和诊断**：
+- 统计信息（co_stats_t、co_scheduler_get_stats）
+- 栈使用分析（co_get_stack_info）
+- 死锁检测（co_detect_deadlock）
+- 日志系统（co_set_log_level、co_set_log_callback）
+
+**全局配置**：
+- co_init() / co_deinit()
+- co_set_allocator()（调度器级别已支持）
+
 ## 设计原则
 
 1. **命名一致性**：`<prefix>_<object>_<action>` 格式
@@ -12,35 +63,48 @@
 
 ### 头文件组织
 
+**当前 v2.0 实现**：
+
 ```c
-#include <libco/co.h>           // 核心 API
-#include <libco/co_sched.h>     // 调度器
-#include <libco/co_sync.h>      // 同步原语（可选）
-#include <libco/co_runtime.h>   // 运行时功能（可选）
+#include <libco/co.h>         // ✅ 核心 API（调度器、协程、I/O）
+#include <libco/co_sync.h>    // ✅ 同步原语（mutex、cond、channel、waitgroup）
+```
+
+**未来计划**：
+```c
+// 🔷 计划拆分更细粒度的头文件
+#include <libco/co_sched.h>     // 🔷 独立调度器头文件
+#include <libco/co_runtime.h>   // 🔷 运行时扩展功能
 ```
 
 ### 1. 初始化和配置
+
+#### 🔷 全局初始化（计划功能）
 
 ```c
 /**
  * @brief 全局库初始化（可选）
  * @return CO_OK on success, error code on failure
+ * @note 🔷 v2.0 未实现，保留用于未来扩展
  */
 co_error_t co_init(void);
 
 /**
  * @brief 全局库清理（可选）
+ * @note 🔷 v2.0 未实现
  */
 void co_deinit(void);
 
 /**
  * @brief 设置全局内存分配器
  * @param allocator 自定义分配器，NULL 表示使用默认
+ * @note 🔷 v2.0 未实现全局设置，但调度器创建时可传入 co_allocator_t
  */
 void co_set_allocator(const co_allocator_t* allocator);
 
 /**
  * @brief 分配器结构
+ * @note ✅ 已实现，调度器创建时使用
  */
 typedef struct co_allocator {
     void* (*malloc_fn)(size_t size, void* userdata);
@@ -55,25 +119,29 @@ typedef struct co_allocator {
 ```c
 /**
  * @brief 调度器配置
+ * @note ✅ 结构已定义，但 v2.0 实际使用简化版（仅 void* config）
+ * @note 🔷 完整字段为设计预留，当前主要用于传递 allocator
  */
 typedef struct co_sched_config {
-    size_t max_routines;         // 最大协程数，0 = 无限制
-    size_t default_stack_size;   // 默认栈大小（字节），0 = 使用默认值
-    co_allocator_t* allocator;   // 自定义分配器，NULL = 使用全局
-    int enable_hooks;            // 是否启用系统调用 hook
-    int flags;                   // 保留标志位
+    size_t max_routines;         // 🔷 最大协程数，0 = 无限制（未强制限制）
+    size_t default_stack_size;   // ✅ 默认栈大小（字节），0 = 使用默认值
+    co_allocator_t* allocator;   // ✅ 自定义分配器，NULL = 使用默认
+    int enable_hooks;            // 🔷 是否启用系统调用 hook（结构支持但未实现）
+    int flags;                   // 🔷 保留标志位
 } co_sched_config_t;
 
 /**
  * @brief 创建调度器
  * @param config 配置，NULL 表示使用默认配置
  * @return 调度器句柄，失败返回 NULL
+ * @note ✅ v2.0 已实现，使用 FIFO 调度策略
  */
 co_scheduler_t* co_scheduler_create(const co_sched_config_t* config);
 
 /**
  * @brief 销毁调度器（会终止所有协程）
  * @param sched 调度器句柄
+ * @note ✅ v2.0 已实现
  */
 void co_scheduler_destroy(co_scheduler_t* sched);
 
@@ -81,6 +149,7 @@ void co_scheduler_destroy(co_scheduler_t* sched);
  * @brief 运行调度器（阻塞直到所有协程结束）
  * @param sched 调度器句柄
  * @return CO_OK on success, error code on failure
+ * @note ✅ v2.0 已实现
  */
 co_error_t co_scheduler_run(co_scheduler_t* sched);
 
@@ -89,18 +158,21 @@ co_error_t co_scheduler_run(co_scheduler_t* sched);
  * @param sched 调度器句柄
  * @param timeout_ms 最大等待时间（毫秒），-1 表示无限等待
  * @return CO_OK on success, error code on failure
+ * @note 🔷 v2.0 未实现，当前仅支持 co_scheduler_run() 阻塞模式
  */
 co_error_t co_scheduler_poll(co_scheduler_t* sched, int timeout_ms);
 
 /**
  * @brief 停止调度器
  * @param sched 调度器句柄
+ * @note ✅ v2.0 已实现
  */
 void co_scheduler_stop(co_scheduler_t* sched);
 
 /**
  * @brief 获取当前线程的调度器
  * @return 调度器句柄，如果不在协程上下文中返回 NULL
+ * @note ✅ v2.0 已实现为 co_current_scheduler()
  */
 co_scheduler_t* co_scheduler_self(void);
 ```
@@ -120,6 +192,7 @@ typedef void (*co_entry_func_t)(void* arg);
  * @param arg 传递给入口函数的参数
  * @param stack_size 栈大小，0 表示使用默认值
  * @return 协程句柄，失败返回 NULL
+ * @note ✅ v2.0 已实现
  */
 co_routine_t* co_spawn(co_scheduler_t* sched,
                        co_entry_func_t entry,
@@ -129,7 +202,7 @@ co_routine_t* co_spawn(co_scheduler_t* sched,
 /**
  * @brief 让出 CPU（切换到其他协程）
  * @return CO_OK on success, error code on failure
- * @note C 代码可以使用 co_yield() 宏别名（定义为 #define co_yield co_yield_now）
+ * @note ✅ v2.0 已实现（宏别名 co_yield 定义为 co_yield_now）
  */
 co_error_t co_yield_now(void);
 
@@ -137,12 +210,14 @@ co_error_t co_yield_now(void);
  * @brief 休眠指定毫秒数
  * @param msec 毫秒数
  * @return CO_OK on success, error code on failure
+ * @note ✅ v2.0 已实现
  */
 co_error_t co_sleep(uint32_t msec);
 
 /**
  * @brief 获取当前协程
  * @return 协程句柄，如果不在协程上下文中返回 NULL
+ * @note ✅ v2.0 已实现为 co_current()
  */
 co_routine_t* co_self(void);
 
@@ -150,6 +225,7 @@ co_routine_t* co_self(void);
  * @brief 设置协程名称（用于调试）
  * @param co 协程句柄
  * @param name 名称字符串（会被复制）
+ * @note 🔷 v2.0 未实现，为调试功能预留
  */
 void co_routine_set_name(co_routine_t* co, const char* name);
 
@@ -157,6 +233,7 @@ void co_routine_set_name(co_routine_t* co, const char* name);
  * @brief 获取协程名称
  * @param co 协程句柄
  * @return 名称字符串，未设置则返回 NULL
+ * @note 🔷 v2.0 未实现
  */
 const char* co_routine_name(co_routine_t* co);
 
@@ -164,6 +241,7 @@ const char* co_routine_name(co_routine_t* co);
  * @brief 获取协程 ID
  * @param co 协程句柄
  * @return 唯一 ID
+ * @note 🔷 v2.0 未实现
  */
 uint64_t co_routine_id(co_routine_t* co);
 
@@ -171,6 +249,7 @@ uint64_t co_routine_id(co_routine_t* co);
  * @brief 获取协程状态
  * @param co 协程句柄
  * @return 协程状态
+ * @note 🔷 v2.0 未实现
  */
 co_state_t co_routine_state(co_routine_t* co);
 
@@ -180,6 +259,7 @@ co_state_t co_routine_state(co_routine_t* co);
  * @param result 结果结构，可为 NULL
  * @param timeout_ms 超时时间（毫秒），-1 表示无限等待
  * @return CO_OK on success, CO_ERROR_TIMEOUT on timeout
+ * @note 🔷 v2.0 未实现，协程生命周期管理为计划功能
  */
 co_error_t co_await(co_routine_t* co, co_result_t* result, int timeout_ms);
 
@@ -187,6 +267,7 @@ co_error_t co_await(co_routine_t* co, co_result_t* result, int timeout_ms);
  * @brief 取消协程
  * @param co 协程句柄
  * @return CO_OK on success, error code on failure
+ * @note 🔷 v2.0 未实现
  */
 co_error_t co_routine_cancel(co_routine_t* co);
 
@@ -194,6 +275,7 @@ co_error_t co_routine_cancel(co_routine_t* co);
  * @brief 分离协程（协程结束后自动释放资源）
  * @param co 协程句柄
  * @return CO_OK on success, error code on failure
+ * @note 🔷 v2.0 未实现
  */
 co_error_t co_routine_detach(co_routine_t* co);
 
@@ -201,11 +283,13 @@ co_error_t co_routine_detach(co_routine_t* co);
  * @brief 协程返回结果
  * @param value 返回值指针
  * @return 不返回（函数会导致协程结束）
+ * @note 🔷 v2.0 未实现
  */
 void co_return(void* value);
 
 /**
  * @brief 协程结果结构
+ * @note 🔷 v2.0 未实现
  */
 typedef struct co_result {
     void* value;          // 返回值
@@ -215,11 +299,12 @@ typedef struct co_result {
 } co_result_t;
 ```
 
-### 4. I/O API（可选，需要启用）
+### 4. I/O API
 
 ```c
 /**
  * @brief I/O 事件类型
+ * @note 🔷 v2.0 未定义此枚举，使用平台原生事件
  */
 typedef enum co_io_event {
     CO_IO_READ = 0x01,
@@ -233,31 +318,33 @@ typedef enum co_io_event {
  * @param events 要等待的事件
  * @param timeout_ms 超时时间（毫秒），-1 表示无限等待
  * @return 就绪的事件，超时返回 0，错误返回负值
+ * @note 🔷 v2.0 未实现，当前使用平台特定函数（如 co_accept_timeout）
  */
 int co_io_wait(int fd, co_io_event_t events, int timeout_ms);
 
 /**
  * @brief 协程友好的 read
- * @note 只有启用 hooks 时才可用
+ * @note ✅ v2.0 已实现 co_read_timeout，带超时参数
  */
 ssize_t co_read(int fd, void* buf, size_t count);
 
 /**
  * @brief 协程友好的 write
- * @note 只有启用 hooks 时才可用
+ * @note ✅ v2.0 已实现 co_write_timeout，带超时参数
  */
 ssize_t co_write(int fd, const void* buf, size_t count);
 ```
 
 ### 5. 同步原语 API
 
-#### 5.1 互斥锁
+#### 5.1 互斥锁 ✅
 
 ```c
 /**
  * @brief 创建互斥锁
  * @param attr 预留扩展参数（当前传 NULL，未来用于递归锁等属性）
  * @return 互斥锁句柄，失败返回 NULL
+ * @note ✅ v2.0 已实现
  */
 co_mutex_t* co_mutex_create(const void* attr);
 
@@ -291,13 +378,14 @@ co_error_t co_mutex_trylock(co_mutex_t* mutex);
 co_error_t co_mutex_unlock(co_mutex_t* mutex);
 ```
 
-#### 5.2 条件变量
+#### 5.2 条件变量 ✅
 
 ```c
 /**
  * @brief 创建条件变量
  * @param attr 预留扩展参数（当前传 NULL）
  * @return 条件变量句柄，失败返回 NULL
+ * @note ✅ v2.0 已实现
  */
 co_cond_t* co_cond_create(const void* attr);
 
@@ -342,7 +430,7 @@ co_error_t co_cond_signal(co_cond_t* cond);
 co_error_t co_cond_broadcast(co_cond_t* cond);
 ```
 
-#### 5.3 Channel（Go 风格）
+#### 5.3 Channel（Go 风格）✅
 
 ```c
 /**
@@ -350,6 +438,7 @@ co_error_t co_cond_broadcast(co_cond_t* cond);
  * @param elem_size 元素大小（字节）
  * @param capacity 容量，0 表示无缓冲 channel
  * @return channel 句柄，失败返回 NULL
+ * @note ✅ v2.0 已实现
  */
 co_channel_t* co_channel_create(size_t elem_size, size_t capacity);
 
@@ -419,11 +508,12 @@ size_t co_channel_cap(co_channel_t* ch);
 int co_channel_is_closed(co_channel_t* ch);
 ```
 
-#### 5.4 Select（多路等待）
+#### 5.4 Select（多路等待）🔷
 
 ```c
 /**
  * @brief Select case 类型
+ * @note 🔷 v2.0 未实现，为 v2.1+ 计划功能
  */
 typedef enum co_select_op {
     CO_SELECT_SEND,     // 发送操作
@@ -447,6 +537,7 @@ typedef struct co_select_case {
  * @param count case 数量
  * @param timeout_ms 超时时间（毫秒），-1 表示无限等待
  * @return 被选中的 case 索引，超时返回 -1
+ * @note 🔷 v2.0 未实现，为高级同步功能预留
  * 
  * @example
  * co_select_case_t cases[] = {
@@ -459,11 +550,12 @@ typedef struct co_select_case {
 int co_select(co_select_case_t* cases, size_t count, int timeout_ms);
 ```
 
-#### 5.5 协程本地存储（TLS）
+#### 5.5 协程本地存储（TLS）🔷
 
 ```c
 /**
  * @brief TLS key 类型
+ * @note 🔷 v2.0 未实现，为 v3.0 计划功能
  */
 typedef struct co_tls_key co_tls_key_t;
 
@@ -477,6 +569,7 @@ typedef void (*co_tls_destructor_t)(void* value);
  * @param key key 指针
  * @param destructor 析构函数，协程结束时调用，可为 NULL
  * @return CO_OK on success, error code on failure
+ * @note 🔷 v2.0 未实现
  */
 co_error_t co_tls_key_create(co_tls_key_t** key, co_tls_destructor_t destructor);
 
@@ -502,12 +595,13 @@ co_error_t co_tls_set(co_tls_key_t* key, void* value);
 void* co_tls_get(co_tls_key_t* key);
 ```
 
-#### 5.6 WaitGroup
+#### 5.6 WaitGroup ✅
 
 ```c
 /**
  * @brief 创建 WaitGroup
  * @return WaitGroup 句柄，失败返回 NULL
+ * @note ✅ v2.0 已实现
  */
 co_waitgroup_t* co_waitgroup_create(void);
 
@@ -538,11 +632,12 @@ void co_waitgroup_done(co_waitgroup_t* wg);
 co_error_t co_waitgroup_wait(co_waitgroup_t* wg);
 ```
 
-### 6. 错误处理 API
+### 6. 错误处理 API ✅
 
 ```c
 /**
  * @brief 错误码定义
+ * @note ✅ v2.0 已实现
  */
 typedef enum co_error {
     CO_OK             =   0,
@@ -559,21 +654,24 @@ typedef enum co_error {
  * @brief 获取错误描述
  * @param err 错误码
  * @return 错误描述字符串
+ * @note 🔷 v2.0 未实现
  */
 const char* co_strerror(co_error_t err);
 
 /**
  * @brief 获取最后一个错误（线程本地）
  * @return 错误码
+ * @note 🔷 v2.0 未实现
  */
 co_error_t co_last_error(void);
 ```
 
-### 7. 统计和调试 API
+### 7. 统计和调试 API 🔷
 
 ```c
 /**
  * @brief 统计信息
+ * @note 🔷 v2.0 未实现，为性能分析预留
  */
 typedef struct co_stats {
     uint64_t total_switches;            // 总切换次数
@@ -589,12 +687,14 @@ typedef struct co_stats {
  * @brief 获取调度器统计信息
  * @param sched 调度器句柄
  * @param stats 统计信息结构
+ * @note 🔷 v2.0 未实现
  */
 void co_scheduler_get_stats(co_scheduler_t* sched, co_stats_t* stats);
 
 /**
  * @brief 设置日志级别
  * @param level 日志级别 (0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG)
+ * @note 🔷 v2.0 未实现统一日志系统
  */
 void co_set_log_level(int level);
 
@@ -609,7 +709,9 @@ void co_set_log_callback(co_log_callback_t callback, void* userdata);
 
 ## 使用示例
 
-### 基础示例
+> **注意**：以下示例展示了 API 的设计用法。标记为 🔷 的功能在 v2.0 中不可用，示例仅作设计参考。✅ 标记的示例可在 v2.0 中运行。
+
+### 基础示例 ✅
 
 ```c
 #include <libco/co.h>
@@ -641,7 +743,7 @@ int main(void) {
 }
 ```
 
-### 生产者-消费者示例
+### 生产者-消费者示例 ✅
 
 ```c
 #include <libco/co.h>
@@ -690,7 +792,7 @@ int main(void) {
 }
 ```
 
-### Echo 服务器示例
+### Echo 服务器示例 🔷
 
 ```c
 #include <libco/co.h>
@@ -760,7 +862,7 @@ int main(void) {
 }
 ```
 
-### Join 和 Cancel 示例
+### Join 和 Cancel 示例 🔷
 
 ```c
 #include <libco/co.h>
@@ -811,7 +913,7 @@ int main(void) {
 }
 ```
 
-### Select 多路等待示例
+### Select 多路等待示例 🔷
 
 ```c
 #include <libco/co.h>
@@ -867,7 +969,7 @@ int main(void) {
 }
 ```
 
-### 协程组示例
+### 协程组示例 🔷
 
 ```c
 #include <libco/co.h>
@@ -908,7 +1010,7 @@ int main(void) {
 }
 ```
 
-## C++ 扩展 API
+## C++ 扩展 API ✅
 
 ```cpp
 #include <libcoxx/coxx.hpp>
@@ -982,7 +1084,7 @@ int main() {
 
 ## 高级功能
 
-### 协程组管理
+### 协程组管理 🔷
 
 ```c
 /**
@@ -993,6 +1095,7 @@ typedef struct co_group co_group_t;
 /**
  * @brief 创建协程组
  * @return 协程组句柄，失败返回 NULL
+ * @note 🔷 v2.0 未实现，建议使用 co_waitgroup 替代
  */
 co_group_t* co_group_create(void);
 
@@ -1026,11 +1129,12 @@ co_error_t co_group_wait(co_group_t* group, int timeout_ms);
 co_error_t co_group_cancel(co_group_t* group);
 ```
 
-### 调试和诊断
+### 调试和诊断 🔷
 
 ```c
 /**
  * @brief 获取协程栈使用信息
+ * @note 🔷 v2.0 未实现，为调试工具预留
  */
 typedef struct co_stack_info {
     size_t total_size;       // 总大小
@@ -1044,6 +1148,7 @@ typedef struct co_stack_info {
  * @param co 协程句柄
  * @param info 输出信息
  * @return CO_OK on success, error code on failure
+ * @note 🔷 v2.0 未实现
  */
 co_error_t co_get_stack_info(co_routine_t* co, co_stack_info_t* info);
 
@@ -1051,6 +1156,7 @@ co_error_t co_get_stack_info(co_routine_t* co, co_stack_info_t* info);
  * @brief 转储协程信息到文件
  * @param co 协程句柄
  * @param fp 文件指针
+ * @note 🔷 v2.0 未实现
  */
 void co_dump_routine(co_routine_t* co, FILE* fp);
 
@@ -1058,6 +1164,7 @@ void co_dump_routine(co_routine_t* co, FILE* fp);
  * @brief 转储调度器所有协程信息
  * @param sched 调度器句柄
  * @param fp 文件指针
+ * @note 🔷 v2.0 未实现
  */
 void co_dump_all(co_scheduler_t* sched, FILE* fp);
 
@@ -1065,12 +1172,24 @@ void co_dump_all(co_scheduler_t* sched, FILE* fp);
  * @brief 检测死锁
  * @param sched 调度器句柄
  * @return 1 表示检测到死锁，0 表示正常
+ * @note 🔷 v2.0 未实现
  */
 int co_detect_deadlock(co_scheduler_t* sched);
 ```
 
 ## 下一步
 
-参见：
+**查看实际实现**：
+- [libco/include/libco/co.h](../../libco/include/libco/co.h) - 核心 API（调度器、协程、I/O）
+- [libco/include/libco/co_sync.h](../../libco/include/libco/co_sync.h) - 同步原语（mutex、cond、channel、waitgroup）
+- [libcoxx/include/coxx/](../../libcoxx/include/coxx/) - C++ 封装
+
+**参考文档**：
 - [03-implementation.md](./03-implementation.md) - 实现细节
 - [04-testing.md](./04-testing.md) - 测试策略
+- [00-overview.md](./00-overview.md) - 项目概览
+
+**注意**：
+- ✅ 标记表示 v2.0 已实现并可用
+- 🔷 标记表示设计预留或计划中的功能
+- 使用 API 前请检查实际头文件确认签名和参数
