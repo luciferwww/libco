@@ -1,12 +1,13 @@
 /**
  * @file iomux_epoll.c
- * @brief Linux epoll 实现
+ * @brief Linux epoll implementation
  * 
- * 使用 Linux 的 epoll API 实现 I/O 多路复用。
- * epoll 是 Linux 特有的高性能事件通知机制，适合处理大量并发连接。
+ * Implements I/O multiplexing using the Linux epoll API.
+ * epoll is a high-performance Linux-specific event notification mechanism well
+ * suited for large numbers of concurrent connections.
  */
 
-#ifndef _WIN32  // 仅在 Linux/Unix 上编译
+#ifndef _WIN32  // Build only on Linux/Unix
 
 #include "../../co_iomux.h"
 #include "../../co_routine.h"
@@ -21,25 +22,25 @@
 #include <assert.h>
 
 // ============================================================================
-// epoll 实现结构
+// epoll implementation structure
 // ============================================================================
 
 /**
- * @brief epoll I/O 多路复用器
+ * @brief epoll I/O multiplexer
  */
 struct co_iomux {
-    int epfd;                   /**< epoll 文件描述符 */
-    int max_events;             /**< 最大事件数 */
-    struct epoll_event *events; /**< 事件缓冲区 */
+    int epfd;                   /**< epoll file descriptor */
+    int max_events;             /**< Maximum event count */
+    struct epoll_event *events; /**< Event buffer */
 };
 
 // ============================================================================
-// I/O 多路复用器实现
+// I/O multiplexer implementation
 // ============================================================================
 
 co_iomux_t *co_iomux_create(int max_events) {
     if (max_events <= 0) {
-        max_events = 1024;  // 默认值
+        max_events = 1024;  // Default value
     }
     
     co_iomux_t *iomux = (co_iomux_t *)calloc(1, sizeof(co_iomux_t));
@@ -47,7 +48,7 @@ co_iomux_t *co_iomux_create(int max_events) {
         return NULL;
     }
     
-    // 创建 epoll 实例
+    // Create the epoll instance
     iomux->epfd = epoll_create1(EPOLL_CLOEXEC);
     if (iomux->epfd == -1) {
         perror("epoll_create1");
@@ -57,7 +58,7 @@ co_iomux_t *co_iomux_create(int max_events) {
     
     iomux->max_events = max_events;
     
-    // 分配事件缓冲区
+    // Allocate the event buffer
     iomux->events = (struct epoll_event *)calloc(max_events, sizeof(struct epoll_event));
     if (!iomux->events) {
         close(iomux->epfd);
@@ -89,7 +90,7 @@ co_error_t co_iomux_add(co_iomux_t *iomux, co_io_wait_ctx_t *wait_ctx) {
     struct epoll_event ev;
     memset(&ev, 0, sizeof(ev));
     
-    // 转换事件类型
+    // Translate event types
     ev.events = 0;
     if (wait_ctx->events & CO_IO_READ) {
         ev.events |= EPOLLIN;
@@ -98,16 +99,16 @@ co_error_t co_iomux_add(co_iomux_t *iomux, co_io_wait_ctx_t *wait_ctx) {
         ev.events |= EPOLLOUT;
     }
     
-    // 使用边缘触发 + 非阻塞模式（高性能）
+    // Use edge-triggered non-blocking mode for better performance
     ev.events |= EPOLLET;
     
-    // data.ptr 存储 wait_ctx，事件就绪时通过它唤醒协程
+    // Store wait_ctx in data.ptr so a ready event can wake the coroutine
     ev.data.ptr = wait_ctx;
     
-    // 添加到 epoll
+    // Add the descriptor to epoll
     if (epoll_ctl(iomux->epfd, EPOLL_CTL_ADD, wait_ctx->fd, &ev) == -1) {
         if (errno == EEXIST) {
-            // 已存在，尝试修改
+            // Already present, try to modify it instead
             return co_iomux_mod(iomux, wait_ctx);
         }
         perror("epoll_ctl ADD");
@@ -148,10 +149,10 @@ co_error_t co_iomux_del(co_iomux_t *iomux, co_socket_t fd) {
         return CO_ERROR_INVAL;
     }
     
-    // epoll_ctl 的第四个参数在 DEL 时会被忽略，但仍需传递非 NULL（某些内核版本）
+    // The fourth epoll_ctl argument is ignored for DEL, but some kernel versions still expect non-NULL
     struct epoll_event ev;
     if (epoll_ctl(iomux->epfd, EPOLL_CTL_DEL, fd, &ev) == -1) {
-        if (errno != ENOENT) {  // 忽略 "不存在" 错误
+        if (errno != ENOENT) {  // Ignore "not found" errors
             perror("epoll_ctl DEL");
             return CO_ERROR_PLATFORM;
         }
@@ -165,12 +166,12 @@ co_error_t co_iomux_poll(co_iomux_t *iomux, int timeout_ms, int *out_ready_count
         return CO_ERROR_INVAL;
     }
     
-    // 调用 epoll_wait
+    // Call epoll_wait
     int nfds = epoll_wait(iomux->epfd, iomux->events, iomux->max_events, timeout_ms);
     
     if (nfds == -1) {
         if (errno == EINTR) {
-            // 被信号中断，返回 0 个事件
+            // Interrupted by a signal, return zero events
             if (out_ready_count) {
                 *out_ready_count = 0;
             }
@@ -181,21 +182,21 @@ co_error_t co_iomux_poll(co_iomux_t *iomux, int timeout_ms, int *out_ready_count
     }
     
     if (nfds == 0) {
-        // 超时
+        // Timeout
         if (out_ready_count) {
             *out_ready_count = 0;
         }
         return CO_ERROR_TIMEOUT;
     }
     
-    // 处理就绪事件
+    // Process ready events
     for (int i = 0; i < nfds; i++) {
         co_io_wait_ctx_t *wait_ctx = (co_io_wait_ctx_t *)iomux->events[i].data.ptr;
         if (!wait_ctx || !wait_ctx->routine) {
             continue;
         }
         
-        // 转换事件类型
+        // Translate event types
         wait_ctx->revents = 0;
         if (iomux->events[i].events & EPOLLIN) {
             wait_ctx->revents |= CO_IO_READ;
@@ -207,15 +208,15 @@ co_error_t co_iomux_poll(co_iomux_t *iomux, int timeout_ms, int *out_ready_count
             wait_ctx->revents |= CO_IO_ERROR;
         }
         
-        // 唤醒协程（将协程从 WAITING 状态移到 READY 状态）
+        // Wake the coroutine by moving it from WAITING to READY
         co_routine_t *routine = wait_ctx->routine;
         if (routine->state == CO_STATE_WAITING) {
             routine->state = CO_STATE_READY;
-            routine->io_waiting = false;    // 干净定时器惰性取消所需的标志
+            routine->io_waiting = false;    // Needed for clean lazy timer cancellation
             routine->scheduler->waiting_io_count--;
-            // 通过协程自身的 scheduler 指针加入就绪队列，
-            // 比 co_current_scheduler() 更精确：明确表达"放回协程所属的调度器"，
-            // 且不依赖线程局部全局变量。
+            // Requeue through the coroutine's own scheduler pointer rather than
+            // co_current_scheduler() to make ownership explicit and avoid
+            // depending on thread-local global state.
             co_queue_push_back(&routine->scheduler->ready_queue, &routine->queue_node);
         }
     }
@@ -228,7 +229,7 @@ co_error_t co_iomux_poll(co_iomux_t *iomux, int timeout_ms, int *out_ready_count
 }
 
 // ============================================================================
-// 辅助函数
+// Helper functions
 // ============================================================================
 
 co_error_t co_set_nonblocking(co_socket_t fd) {
@@ -270,14 +271,14 @@ co_error_t co_set_blocking(co_socket_t fd) {
 }
 
 // ============================================================================
-// 协程式 I/O API 实现
+// Coroutine-friendly I/O API implementation
 // ============================================================================
 
 /**
- * @brief 等待 I/O 事件（内部辅助函数）
+ * @brief Wait for an I/O event (internal helper)
  */
 static co_error_t co_wait_io(co_socket_t fd, uint32_t events, int64_t timeout_ms) {
-    // 获取当前协程和调度器
+    // Get the current coroutine and scheduler
     co_scheduler_t *sched = co_current_scheduler();
     co_routine_t *current = co_current_routine();
     
@@ -285,16 +286,16 @@ static co_error_t co_wait_io(co_socket_t fd, uint32_t events, int64_t timeout_ms
         return CO_ERROR_INVAL;
     }
     
-    // 注意：调用方（co_read/co_write/co_accept/co_connect）
-    // 在首次 syscall 前已调用 co_set_nonblocking()，此处无需重复。
+    // The callers co_read/co_write/co_accept/co_connect already call
+    // co_set_nonblocking() before the first syscall, so there is no need to
+    // repeat it here.
     
-    // 创建等待上下文
-    // 安全性说明：wait_ctx 分配在协程栈上，而非系统调用栈。
-    // co_context_swap() 挂起本协程后，协程栈始终保持有效（协程栈由
-    // co_stack_pool 管理，生命周期与协程绑定，不会被调度器回收）。
-    // 因此 epoll 通过 ev.data.ptr 持有的 &wait_ctx 指针在协程恢复前
-    // 一直有效。协程恢复后 co_iomux_del() 会将 fd 从 epoll 移除，
-    // 此后 epoll 不再访问该指针，wait_ctx 随栈帧安全销毁。
+    // Create the wait context.
+    // Safety note: wait_ctx lives on the coroutine stack, not the syscall
+    // stack. After co_context_swap() suspends the coroutine, that stack remains
+    // valid because it is owned by the coroutine and managed by co_stack_pool.
+    // epoll can therefore safely keep &wait_ctx in ev.data.ptr until the
+    // coroutine resumes and calls co_iomux_del().
     co_io_wait_ctx_t wait_ctx;
     memset(&wait_ctx, 0, sizeof(wait_ctx));
     wait_ctx.fd = fd;
@@ -302,51 +303,49 @@ static co_error_t co_wait_io(co_socket_t fd, uint32_t events, int64_t timeout_ms
     wait_ctx.timeout_ms = timeout_ms;
     wait_ctx.routine = current;
     
-    // 初始化超时状态
+    // Initialize timeout state
     current->timed_out = false;
     current->io_waiting = false;
 
-    // 计算绝对截止时间，并注册到定时器堆
+    // Compute the absolute deadline and register it in the timer heap
     if (timeout_ms >= 0) {
         current->wakeup_time = co_get_monotonic_time_ms() + (uint64_t)timeout_ms;
         current->io_waiting = true;
         if (!co_timer_heap_push(&sched->timer_heap, current)) {
-            current->io_waiting = false;  // 恢复标志：push 失败，定时器未注册
+            current->io_waiting = false;  // Restore the flag because timer registration failed
             return CO_ERROR_NOMEM;
         }
     }
 
-    // 注册到多路复用器
+    // Register with the multiplexer
     co_error_t err = co_iomux_add(sched->iomux, &wait_ctx);
     if (err != CO_OK) {
-        // 注册失败：定时器已入堆（若有），但 io_waiting 清零让 timer handler 跳过
+        // Registration failed. The timer may already be queued, so clear
+        // io_waiting to make the timer handler skip it.
         current->io_waiting = false;
         return err;
     }
     
-    // 标记协程为等待状态，并更新调度器的 waiting_io_count
+    // Mark the coroutine as waiting and update waiting_io_count
     current->state = CO_STATE_WAITING;
     sched->waiting_io_count++;
     
-    // 切换回调度器，等待 I/O 事件
-    // 必须用 co_context_swap() 直接切换到调度器，而非 co_yield()。
-    // co_yield() 会无条件地将协程重新加入 ready_queue，导致调度器
-    // 无法感知协程处于等待状态，从而永远不会调用 co_iomux_poll()。
-    // co_context_swap() 直接切换到调度器主上下文，协程保持 WAITING
-    // 状态，调度器在 ready_queue 为空时调用 co_iomux_poll()，触发
-    // epoll 等待，直到 I/O 就绪后将协程重新加入 ready_queue。
+    // Switch back to the scheduler and wait for I/O.
+    // This must use co_context_swap() instead of co_yield() because co_yield()
+    // would blindly place the coroutine back in ready_queue and hide its
+    // waiting state from the scheduler.
     co_context_swap(&current->context, &sched->main_ctx);
     
-    // 恢复执行时，I/O 已就绪或超时
-    // 不论哪种情况，都需要移除 epoll 注册（防止重复触发）
+    // Once resumed, the I/O is either ready or timed out. In either case,
+    // remove the epoll registration to avoid duplicate wakeups.
     co_iomux_del(sched->iomux, fd);
 
-    // 如果是超时唤醒，返回 TIMEOUT
+    // Return TIMEOUT if the timer resumed the coroutine
     if (current->timed_out) {
         return CO_ERROR_TIMEOUT;
     }
 
-    // 检查是否是错误事件
+    // Check for error events
     if (wait_ctx.revents & CO_IO_ERROR) {
         return CO_ERROR;
     }
@@ -360,27 +359,27 @@ ssize_t co_read(co_socket_t fd, void *buf, size_t count, int64_t timeout_ms) {
         return -1;
     }
     
-    // 确保 fd 为非阻塞，防止首次 read() 阻塞整个调度器线程
+    // Ensure fd is non-blocking so the initial read() cannot stall the scheduler thread
     co_set_nonblocking(fd);
     
-    // 先尝试直接读取
+    // First try a direct read
     ssize_t n = read(fd, buf, count);
     if (n >= 0) {
-        return n;  // 成功读取
+        return n;  // Read completed successfully
     }
     
     if (errno != EAGAIN && errno != EWOULDBLOCK) {
-        return -1;  // 真实错误
+        return -1;  // Real error
     }
     
-    // EAGAIN: 数据未就绪，等待可读事件
+    // EAGAIN: data is not ready yet, wait for a readable event
     co_error_t err = co_wait_io(fd, CO_IO_READ, timeout_ms);
     if (err != CO_OK) {
         errno = (err == CO_ERROR_TIMEOUT) ? ETIMEDOUT : EIO;
         return -1;
     }
     
-    // 重新尝试读取
+    // Retry the read
     return read(fd, buf, count);
 }
 
@@ -390,7 +389,7 @@ ssize_t co_write(co_socket_t fd, const void *buf, size_t count, int64_t timeout_
         return -1;
     }
     
-    // 确保 fd 为非阻塞，防止首次 write() 阻塞整个调度器线程
+    // Ensure fd is non-blocking so the initial write() cannot stall the scheduler thread
     co_set_nonblocking(fd);
     
     ssize_t n = write(fd, buf, count);
@@ -417,7 +416,7 @@ co_socket_t co_accept(co_socket_t sockfd, void *addr, socklen_t *addrlen, int64_
         return -1;
     }
     
-    // 确保监听套接字为非阻塞，否则 accept() 会阻塞整个调度器线程
+    // Ensure the listening socket is non-blocking so accept() cannot stall the scheduler thread
     co_set_nonblocking(sockfd);
     
     co_socket_t client_fd = accept(sockfd, (struct sockaddr *)addr, addrlen);
@@ -444,26 +443,26 @@ int co_connect(co_socket_t sockfd, const void *addr, socklen_t addrlen, int64_t 
         return -1;
     }
     
-    // 必须先设为非阻塞，否则 connect() 会阻塞，无法得到 EINPROGRESS
+    // The socket must be non-blocking first, otherwise connect() can block and never yield EINPROGRESS
     co_set_nonblocking(sockfd);
     
     int ret = connect(sockfd, (const struct sockaddr *)addr, addrlen);
     if (ret == 0) {
-        return 0;  // 立即成功（很少见）
+        return 0;  // Immediate success, which is uncommon
     }
     
     if (errno != EINPROGRESS) {
-        return -1;  // 真实错误
+        return -1;  // Real error
     }
     
-    // EINPROGRESS: 连接进行中，等待可写事件
+    // EINPROGRESS: connection is in progress, wait for a writable event
     co_error_t err = co_wait_io(sockfd, CO_IO_WRITE, timeout_ms);
     if (err != CO_OK) {
         errno = (err == CO_ERROR_TIMEOUT) ? ETIMEDOUT : EIO;
         return -1;
     }
     
-    // 检查连接是否成功
+    // Check whether the connection completed successfully
     int so_error = 0;
     socklen_t so_error_len = sizeof(so_error);
     if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &so_error, &so_error_len) == -1) {

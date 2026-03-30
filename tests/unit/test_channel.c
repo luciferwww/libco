@@ -1,14 +1,14 @@
 /**
  * @file test_channel.c
- * @brief 协程 Channel 单元测试
+ * @brief Coroutine channel unit tests
  *
- * 测试覆盖：
- *   1. 有缓冲 channel：基本 send/recv
- *   2. 有缓冲 channel：缓冲区满时 send 阻塞
- *   3. 有缓冲 channel：FIFO 顺序
- *   4. 无缓冲 channel：rendezvous（send/recv 握手）
- *   5. 关闭 channel：recv 排空后返回 CLOSED
- *   6. 非阻塞 trysend / tryrecv
+ * Coverage:
+ *   1. Buffered channel: basic send/recv
+ *   2. Buffered channel: send blocks when the buffer is full
+ *   3. Buffered channel: FIFO ordering
+ *   4. Unbuffered channel: rendezvous send/recv handshake
+ *   5. Closed channel: recv drains buffered data and then returns CLOSED
+ *   6. Non-blocking trysend / tryrecv
  */
 
 #include "unity.h"
@@ -17,7 +17,7 @@
 #include <string.h>
 
 // ============================================================================
-// 辅助
+// Helpers
 // ============================================================================
 
 static int g_result[32];
@@ -31,7 +31,7 @@ void setUp(void) {
 void tearDown(void) {}
 
 // ============================================================================
-// 测试 1：有缓冲 channel 基本 send / recv
+// Test 1: buffered channel basic send / recv
 // ============================================================================
 
 typedef struct {
@@ -72,7 +72,7 @@ void test_channel_buffered_basic(void) {
 }
 
 // ============================================================================
-// 测试 2：缓冲区满时 send 阻塞，recv 唤醒后继续
+// Test 2: send blocks when the buffer is full and resumes after recv wakes it
 // ============================================================================
 
 static co_channel_t *g_ch = NULL;
@@ -95,7 +95,7 @@ static void receiver_many(void *arg) {
 
 void test_channel_buffered_blocks_when_full(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
-    g_ch = co_channel_create(sizeof(int), 2);  /* 容量仅 2 */
+    g_ch = co_channel_create(sizeof(int), 2);  /* Capacity is only 2 */
 
     int n = 6;
     co_spawn(sched, sender_many,   &n, 0);
@@ -104,7 +104,7 @@ void test_channel_buffered_blocks_when_full(void) {
     co_scheduler_run(sched);
 
     TEST_ASSERT_EQUAL_INT(6, g_result_idx);
-    /* 验证收到的总值：1+2+3+4+5+6 = 21 */
+    /* Verify the received sum: 1+2+3+4+5+6 = 21 */
     int sum = 0;
     for (int i = 0; i < 6; i++) sum += g_result[i];
     TEST_ASSERT_EQUAL_INT(21, sum);
@@ -115,14 +115,14 @@ void test_channel_buffered_blocks_when_full(void) {
 }
 
 // ============================================================================
-// 测试 3：FIFO 顺序
+// Test 3: FIFO ordering
 // ============================================================================
 
 void test_channel_fifo_order(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
     g_ch = co_channel_create(sizeof(int), 8);
 
-    /* 先把 1~5 全部送入缓冲区（容量够） */
+    /* Send 1 through 5 into the buffer first; capacity is sufficient */
     int vals[5] = {1, 2, 3, 4, 5};
     ch_arg_t args[5];
     for (int i = 0; i < 5; i++) {
@@ -147,7 +147,7 @@ void test_channel_fifo_order(void) {
 }
 
 // ============================================================================
-// 测试 4：无缓冲 channel (rendezvous)
+// Test 4: unbuffered channel (rendezvous)
 // ============================================================================
 
 void test_channel_unbuffered_rendezvous(void) {
@@ -157,7 +157,7 @@ void test_channel_unbuffered_rendezvous(void) {
     ch_arg_t send_arg = {ch, 99};
     ch_arg_t recv_arg = {ch, 0};
 
-    /* 发送者先 spawn，会在 send 时挂起等接收者 */
+    /* Spawn the sender first; it should suspend on send until a receiver arrives */
     co_spawn(sched, coroutine_sender,   &send_arg, 0);
     co_spawn(sched, coroutine_receiver, &recv_arg, 0);
 
@@ -171,7 +171,7 @@ void test_channel_unbuffered_rendezvous(void) {
 }
 
 // ============================================================================
-// 测试 5：关闭 channel 后 recv 排空返回 CLOSED
+// Test 5: recv drains a closed channel before returning CLOSED
 // ============================================================================
 
 static void producer_then_close(void *arg) {
@@ -188,7 +188,7 @@ static void drain_until_closed(void *arg) {
     while ((ret = co_channel_recv(ch, &val)) == CO_OK) {
         g_result[g_result_idx++] = val;
     }
-    /* 最后一次返回 CO_ERROR_CLOSED */
+    /* The final receive should return CO_ERROR_CLOSED */
     g_result[g_result_idx++] = (ret == CO_ERROR_CLOSED) ? -1 : -2;
 }
 
@@ -201,7 +201,7 @@ void test_channel_close_drains_then_closed(void) {
 
     co_scheduler_run(sched);
 
-    /* 收到 1 个值 (7)，然后 -1 表示 CLOSED */
+    /* Expect one value (7), then -1 to mark CLOSED */
     TEST_ASSERT_EQUAL_INT(2,  g_result_idx);
     TEST_ASSERT_EQUAL_INT(7,  g_result[0]);
     TEST_ASSERT_EQUAL_INT(-1, g_result[1]);
@@ -211,35 +211,35 @@ void test_channel_close_drains_then_closed(void) {
 }
 
 // ============================================================================
-// 测试 6：trysend / tryrecv 非阻塞
+// Test 6: non-blocking trysend / tryrecv
 // ============================================================================
 
 void test_channel_trysend_tryrecv(void) {
     co_channel_t *ch = co_channel_create(sizeof(int), 2);
 
     int val = 10;
-    /* 空 channel 可 trysend */
+    /* trysend should succeed on an empty channel */
     TEST_ASSERT_EQUAL_INT(CO_OK,       co_channel_trysend(ch, &val));
     val = 20;
     TEST_ASSERT_EQUAL_INT(CO_OK,       co_channel_trysend(ch, &val));
-    /* 满了，返回 BUSY */
+    /* Once full, trysend should return BUSY */
     val = 30;
     TEST_ASSERT_EQUAL_INT(CO_ERROR_BUSY, co_channel_trysend(ch, &val));
 
-    /* 可以 tryrecv */
+    /* tryrecv should succeed while items are available */
     int out = 0;
     TEST_ASSERT_EQUAL_INT(CO_OK,       co_channel_tryrecv(ch, &out));
     TEST_ASSERT_EQUAL_INT(10, out);
     TEST_ASSERT_EQUAL_INT(CO_OK,       co_channel_tryrecv(ch, &out));
     TEST_ASSERT_EQUAL_INT(20, out);
-    /* 空了，返回 BUSY */
+    /* Once empty, tryrecv should return BUSY */
     TEST_ASSERT_EQUAL_INT(CO_ERROR_BUSY, co_channel_tryrecv(ch, &out));
 
     co_channel_destroy(ch);
 }
 
 // ============================================================================
-// 测试入口
+// Test entry
 // ============================================================================
 
 int main(void) {

@@ -1,13 +1,13 @@
 /**
  * @file co_mutex.c
- * @brief 协程互斥锁实现
+ * @brief Coroutine mutex implementation
  * 
- * 协程级互斥锁，与 pthread_mutex 的核心区别：
- * - 锁冲突时当前协程挂起（co_context_swap 切回调度器），
- *   调度器线程继续运行其他协程，不会阻塞整个线程。
- * - 解锁时将等待队列中第一个协程放回 ready_queue，由调度器调度执行。
- * - 等待队列使用协程已有的 queue_node（WAITING 状态的协程不在 ready_queue 中，
- *   节点空闲可复用）。
+ * Coroutine-level mutex with key differences from pthread_mutex:
+ * - On contention, the current coroutine is suspended with co_context_swap,
+ *   allowing the scheduler thread to continue running other coroutines.
+ * - Unlocking moves the first waiter back to the ready_queue for scheduling.
+ * - The wait queue reuses each coroutine's existing queue_node because a
+ *   WAITING coroutine is not present in ready_queue.
  */
 
 #include "co_mutex.h"
@@ -18,11 +18,11 @@
 #include <assert.h>
 
 // ============================================================================
-// 创建和销毁
+// Creation and destruction
 // ============================================================================
 
 co_mutex_t *co_mutex_create(const void *attr) {
-    (void)attr;  // 预留扩展，当前忽略
+    (void)attr;  // Reserved for future extensions and currently ignored
     co_mutex_t *mutex = (co_mutex_t *)calloc(1, sizeof(co_mutex_t));
     if (!mutex) {
         return NULL;
@@ -37,14 +37,14 @@ co_error_t co_mutex_destroy(co_mutex_t *mutex) {
     if (!mutex) {
         return CO_ERROR_INVAL;
     }
-    // 销毁时等待队列应为空
+    // The wait queue must be empty when destroying the mutex
     assert(co_queue_empty(&mutex->wait_queue) && "destroying a mutex with waiters");
     free(mutex);
     return CO_OK;
 }
 
 // ============================================================================
-// 加锁 / 解锁
+// Lock and unlock
 // ============================================================================
 
 co_error_t co_mutex_lock(co_mutex_t *mutex) {
@@ -55,8 +55,9 @@ co_error_t co_mutex_lock(co_mutex_t *mutex) {
     co_scheduler_t *sched = co_current_scheduler();
     co_routine_t *current = co_current_routine();
 
-    // 不在协程上下文中（如调度器启动前从主线程调用）：
-    // 直接获取锁（无并发，不需要挂起），若已被占用则返回 BUSY（无法阻塞等待）。
+    // Outside coroutine context, such as before the scheduler starts on the
+    // main thread, take the lock directly. If already held, return BUSY
+    // because blocking suspension is not possible.
     if (!sched || !current) {
         if (mutex->locked) {
             return CO_ERROR_BUSY;
@@ -67,20 +68,20 @@ co_error_t co_mutex_lock(co_mutex_t *mutex) {
     }
 
     if (!mutex->locked) {
-        // 锁空闲，直接持有
+        // Mutex is free, take ownership immediately
         mutex->locked = true;
         mutex->owner = current;
         return CO_OK;
     }
 
-    // 锁已被占用，将当前协程挂起放入等待队列
+    // Mutex is busy, suspend the current coroutine and enqueue it as a waiter
     current->state = CO_STATE_WAITING;
     co_queue_push_back(&mutex->wait_queue, &current->queue_node);
 
-    // 切回调度器，等待解锁后被唤醒
+    // Switch back to the scheduler and wait to be resumed on unlock
     co_context_swap(&current->context, &sched->main_ctx);
 
-    // 被 co_mutex_unlock 唤醒，此时已持有锁
+    // Resumed by co_mutex_unlock and now owns the mutex
     assert(mutex->locked && mutex->owner == current);
     return CO_OK;
 }
@@ -106,18 +107,18 @@ co_error_t co_mutex_unlock(co_mutex_t *mutex) {
 
     co_queue_node_t *node = co_queue_pop_front(&mutex->wait_queue);
     if (!node) {
-        // 无等待者，直接释放
+        // No waiters; release the mutex directly
         mutex->locked = false;
         mutex->owner = NULL;
         return CO_OK;
     }
 
-    // 有等待者：将锁直接转交给队首协程（减少一次无谓的竞争）
+    // Hand the mutex directly to the first waiter to avoid an unnecessary race
     co_routine_t *next = (co_routine_t *)((char *)node - offsetof(co_routine_t, queue_node));
     mutex->owner = next;
-    // locked 保持 true，锁已转交
+    // locked remains true because ownership has been transferred
 
-    // 将该协程放回就绪队列
+    // Requeue the coroutine in the ready queue
     next->state = CO_STATE_READY;
     co_queue_push_back(&next->scheduler->ready_queue, &next->queue_node);
 

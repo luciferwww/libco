@@ -1,6 +1,6 @@
 /**
  * @file co_stack_pool.c
- * @brief 协程栈内存池实现
+ * @brief Coroutine stack pool implementation
  */
 
 #include "co_stack_pool.h"
@@ -9,24 +9,24 @@
 #include <assert.h>
 
 // ============================================================================
-// 内部结构
+// Internal structure
 // ============================================================================
 
 /**
- * @brief 栈池结构
+ * @brief Stack pool structure
  */
 struct co_stack_pool {
-    size_t stack_size;           /**< 每个栈的大小 */
-    void **stacks;               /**< 栈指针数组 */
-    size_t capacity;             /**< 池的最大容量 */
-    size_t count;                /**< 当前缓存的栈数量 */
+    size_t stack_size;           /**< Size of each stack */
+    void **stacks;               /**< Array of stack pointers */
+    size_t capacity;             /**< Maximum pool capacity */
+    size_t count;                /**< Number of cached stacks */
     
-    // 统计信息
+    // Statistics
     co_stack_pool_stats_t stats;
 };
 
 // ============================================================================
-// 栈池管理
+// Stack pool management
 // ============================================================================
 
 co_stack_pool_t *co_stack_pool_create(size_t stack_size, size_t initial_capacity) {
@@ -34,7 +34,7 @@ co_stack_pool_t *co_stack_pool_create(size_t stack_size, size_t initial_capacity
         return NULL;
     }
     
-    // 分配池结构
+    // Allocate the pool structure
     co_stack_pool_t *pool = (co_stack_pool_t *)calloc(1, sizeof(co_stack_pool_t));
     if (!pool) {
         return NULL;
@@ -44,7 +44,7 @@ co_stack_pool_t *co_stack_pool_create(size_t stack_size, size_t initial_capacity
     pool->capacity = initial_capacity;
     pool->count = 0;
     
-    // 分配栈指针数组
+    // Allocate the stack pointer array
     if (initial_capacity > 0) {
         pool->stacks = (void **)calloc(initial_capacity, sizeof(void *));
         if (!pool->stacks) {
@@ -52,8 +52,8 @@ co_stack_pool_t *co_stack_pool_create(size_t stack_size, size_t initial_capacity
             return NULL;
         }
         
-        // 预分配栈（可选：暂时不预分配，按需分配）
-        // 这样可以避免启动时分配大量内存
+        // Preallocating stacks is optional; for now allocation is on demand.
+        // This avoids large upfront memory usage during startup.
     }
     
     memset(&pool->stats, 0, sizeof(co_stack_pool_stats_t));
@@ -66,7 +66,7 @@ void co_stack_pool_destroy(co_stack_pool_t *pool) {
         return;
     }
     
-    // 释放所有缓存的栈
+    // Free all cached stacks
     for (size_t i = 0; i < pool->count; i++) {
         free(pool->stacks[i]);
     }
@@ -80,14 +80,14 @@ void *co_stack_pool_alloc(co_stack_pool_t *pool) {
     
     pool->stats.total_allocs++;
     
-    // 尝试从池中获取
+    // Try to reuse a stack from the pool
     if (pool->count > 0) {
         pool->stats.cache_hits++;
         pool->stats.current_used++;
         return pool->stacks[--pool->count];
     }
     
-    // 池为空，分配新栈
+    // Pool is empty; allocate a new stack
     pool->stats.cache_misses++;
     pool->stats.current_used++;
     
@@ -102,17 +102,17 @@ void co_stack_pool_free(co_stack_pool_t *pool, void *stack) {
     pool->stats.total_frees++;
     pool->stats.current_used--;
     
-    // 如果池未满，缓存该栈
+    // Cache the stack if the pool is not full
     if (pool->count < pool->capacity) {
         pool->stacks[pool->count++] = stack;
     } else {
-        // 池已满，直接释放
+        // Pool is full; free it directly
         free(stack);
     }
 }
 
 // ============================================================================
-// 栈池查询
+// Stack pool queries
 // ============================================================================
 
 size_t co_stack_pool_stack_size(const co_stack_pool_t *pool) {
@@ -131,7 +131,7 @@ size_t co_stack_pool_capacity(const co_stack_pool_t *pool) {
 }
 
 // ============================================================================
-// 统计信息
+// Statistics
 // ============================================================================
 
 void co_stack_pool_get_stats(const co_stack_pool_t *pool, co_stack_pool_stats_t *stats) {
@@ -144,7 +144,7 @@ void co_stack_pool_get_stats(const co_stack_pool_t *pool, co_stack_pool_stats_t 
 void co_stack_pool_reset_stats(co_stack_pool_t *pool) {
     assert(pool != NULL);
     
-    // 保留 current_used，重置其他统计
+    // Preserve current_used while resetting the other counters
     size_t current_used = pool->stats.current_used;
     memset(&pool->stats, 0, sizeof(co_stack_pool_stats_t));
     pool->stats.current_used = current_used;

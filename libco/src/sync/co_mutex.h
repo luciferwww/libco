@@ -1,6 +1,6 @@
 /**
  * @file co_mutex.h
- * @brief 协程互斥锁内部结构
+ * @brief Internal coroutine mutex structure
  */
 
 #ifndef LIBCO_CO_MUTEX_H
@@ -15,16 +15,16 @@ extern "C" {
 #endif
 
 /**
- * @brief 协程互斥锁
+ * @brief Coroutine mutex
  * 
- * 非线程安全（单线程调度器内使用）。
- * 锁冲突时协程挂起，不阻塞调度器线程。
- * 等待队列按 FIFO 顺序唤醒，防止饥饿。
+ * Not thread-safe and intended for use within a single-threaded scheduler.
+ * On contention, the coroutine is suspended without blocking the scheduler
+ * thread. Waiters are resumed in FIFO order to avoid starvation.
  */
 struct co_mutex {
-    bool locked;                /**< 当前是否已加锁 */
-    co_routine_t *owner;        /**< 当前持有者（仅用于断言检查） */
-    co_queue_t wait_queue;      /**< 等待此锁的协程队列（FIFO） */
+    bool locked;                /**< Whether the mutex is currently locked */
+    co_routine_t *owner;        /**< Current owner, used only for assertions */
+    co_queue_t wait_queue;      /**< FIFO queue of coroutines waiting for the mutex */
 };
 
 #ifdef __cplusplus

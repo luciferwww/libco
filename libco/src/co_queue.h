@@ -1,8 +1,8 @@
 /**
  * @file co_queue.h
- * @brief 协程就绪队列（双向链表）
+ * @brief Coroutine ready queue (doubly linked list)
  * 
- * 用于管理就绪状态的协程。
+ * Used to manage coroutines in the ready state.
  */
 
 #ifndef LIBCO_CO_QUEUE_H
@@ -16,13 +16,13 @@ extern "C" {
 #endif
 
 // ============================================================================
-// 链表节点
+// List nodes
 // ============================================================================
 
 /**
- * @brief 双向链表节点
+ * @brief Doubly linked list node
  * 
- * 这是一个侵入式链表节点，通常嵌入在其他结构体中。
+ * This is an intrusive list node, typically embedded in another structure.
  */
 typedef struct co_queue_node {
     struct co_queue_node *next;
@@ -30,7 +30,7 @@ typedef struct co_queue_node {
 } co_queue_node_t;
 
 /**
- * @brief 初始化链表节点
+ * @brief Initialize a list node
  */
 static inline void co_queue_node_init(co_queue_node_t *node) {
     node->next = node;
@@ -38,26 +38,26 @@ static inline void co_queue_node_init(co_queue_node_t *node) {
 }
 
 /**
- * @brief 检查节点是否在链表中
+ * @brief Check whether a node is linked into a list
  */
 static inline bool co_queue_node_is_linked(const co_queue_node_t *node) {
     return node->next != node;
 }
 
 // ============================================================================
-// 队列（双向链表）
+// Queue (doubly linked list)
 // ============================================================================
 
 /**
- * @brief 协程队列（双向循环链表）
+ * @brief Coroutine queue (circular doubly linked list)
  */
 typedef struct co_queue {
-    co_queue_node_t head;    /**< 哨兵节点 */
-    size_t size;             /**< 队列大小 */
+    co_queue_node_t head;    /**< Sentinel node */
+    size_t size;             /**< Queue size */
 } co_queue_t;
 
 /**
- * @brief 初始化队列
+ * @brief Initialize a queue
  */
 static inline void co_queue_init(co_queue_t *queue) {
     co_queue_node_init(&queue->head);
@@ -65,21 +65,21 @@ static inline void co_queue_init(co_queue_t *queue) {
 }
 
 /**
- * @brief 检查队列是否为空
+ * @brief Check whether a queue is empty
  */
 static inline bool co_queue_empty(const co_queue_t *queue) {
     return queue->size == 0;
 }
 
 /**
- * @brief 获取队列大小
+ * @brief Get the queue size
  */
 static inline size_t co_queue_size(const co_queue_t *queue) {
     return queue->size;
 }
 
 /**
- * @brief 在队尾添加节点
+ * @brief Append a node to the back of the queue
  */
 static inline void co_queue_push_back(co_queue_t *queue, co_queue_node_t *node) {
     co_queue_node_t *tail = queue->head.prev;
@@ -93,7 +93,7 @@ static inline void co_queue_push_back(co_queue_t *queue, co_queue_node_t *node) 
 }
 
 /**
- * @brief 在队首添加节点
+ * @brief Insert a node at the front of the queue
  */
 static inline void co_queue_push_front(co_queue_t *queue, co_queue_node_t *node) {
     co_queue_node_t *front = queue->head.next;
@@ -107,7 +107,7 @@ static inline void co_queue_push_front(co_queue_t *queue, co_queue_node_t *node)
 }
 
 /**
- * @brief 从队列中移除节点
+ * @brief Remove a node from the queue
  */
 static inline void co_queue_remove(co_queue_t *queue, co_queue_node_t *node) {
     if (!co_queue_node_is_linked(node)) {
@@ -117,12 +117,12 @@ static inline void co_queue_remove(co_queue_t *queue, co_queue_node_t *node) {
     node->prev->next = node->next;
     node->next->prev = node->prev;
     
-    co_queue_node_init(node);  // 重置为未链接状态
+    co_queue_node_init(node);  // Reset to the unlinked state
     queue->size--;
 }
 
 /**
- * @brief 弹出队首节点
+ * @brief Pop the front node
  */
 static inline co_queue_node_t *co_queue_pop_front(co_queue_t *queue) {
     if (co_queue_empty(queue)) {
@@ -135,7 +135,7 @@ static inline co_queue_node_t *co_queue_pop_front(co_queue_t *queue) {
 }
 
 /**
- * @brief 获取队首节点（不移除）
+ * @brief Get the front node without removing it
  */
 static inline co_queue_node_t *co_queue_front(const co_queue_t *queue) {
     if (co_queue_empty(queue)) {
@@ -145,7 +145,7 @@ static inline co_queue_node_t *co_queue_front(const co_queue_t *queue) {
 }
 
 /**
- * @brief 获取队尾节点（不移除）
+ * @brief Get the back node without removing it
  */
 static inline co_queue_node_t *co_queue_back(const co_queue_t *queue) {
     if (co_queue_empty(queue)) {
@@ -155,13 +155,13 @@ static inline co_queue_node_t *co_queue_back(const co_queue_t *queue) {
 }
 
 // ============================================================================
-// 遍历宏
+// Iteration macros
 // ============================================================================
 
 /**
- * @brief 遍历队列
- * @param queue 队列指针
- * @param node 当前节点指针
+ * @brief Iterate over a queue
+ * @param queue Queue pointer
+ * @param node Current node pointer
  */
 #define co_queue_foreach(queue, node) \
     for (co_queue_node_t *node = (queue)->head.next; \
@@ -169,10 +169,10 @@ static inline co_queue_node_t *co_queue_back(const co_queue_t *queue) {
          node = node->next)
 
 /**
- * @brief 安全遍历队列（可以在遍历中删除节点）
- * @param queue 队列指针
- * @param node 当前节点指针
- * @param temp 临时节点指针
+ * @brief Safely iterate over a queue while allowing node removal
+ * @param queue Queue pointer
+ * @param node Current node pointer
+ * @param temp Temporary node pointer
  */
 #define co_queue_foreach_safe(queue, node, temp) \
     for (co_queue_node_t *node = (queue)->head.next, *temp = node->next; \

@@ -1,8 +1,8 @@
 /**
  * @file co_scheduler.h
- * @brief 调度器内部数据结构
+ * @brief Internal scheduler data structures
  * 
- * 定义调度器的内部表示。
+ * Defines the internal representation of the scheduler.
  */
 
 #ifndef LIBCO_CO_SCHEDULER_H
@@ -23,82 +23,82 @@ extern "C" {
 #endif
 
 // ============================================================================
-// 调度器结构
+// Scheduler structure
 // ============================================================================
 
 /**
- * @brief 调度器结构
+ * @brief Scheduler structure
  */
 struct co_scheduler {
-    // 就绪队列（FIFO）
+    // Ready queue (FIFO)
     co_queue_t ready_queue;
     
-    // Week 6: 定时器堆（休眠协程管理）
+    // Week 6: Timer heap for sleeping coroutines
     co_timer_heap_t timer_heap;
     
-    // Week 7: I/O 多路复用上下文
-    co_iomux_t *iomux;             /**< I/O 多路复用器 (epoll/kqueue/IOCP) */
+    // Week 7: I/O multiplexer context
+    co_iomux_t *iomux;             /**< I/O multiplexer (epoll/kqueue/IOCP) */
     
-    // 当前运行的协程
+    // Currently running coroutine
     co_routine_t *current;
     
-    // 主上下文（调度器上下文）
+    // Main scheduler context
     co_context_t main_ctx;
     
-    // 栈池（Week 5）
+    // Stack pool (Week 5)
     co_stack_pool_t *stack_pool;
     
-    // 配置
-    size_t default_stack_size;  /**< 默认栈大小 */
+    // Configuration
+    size_t default_stack_size;  /**< Default stack size */
     
-    // 运行状态
-    bool running;               /**< 是否正在运行 */
-    bool should_stop;           /**< 是否应该停止 */
+    // Runtime state
+    bool running;               /**< Whether the scheduler is running */
+    bool should_stop;           /**< Whether the scheduler should stop */
     
-    // 统计信息
-    uint64_t total_routines;    /**< 已创建的协程总数 */
-    uint64_t active_routines;   /**< 当前活跃的协程数 */
-    uint64_t switch_count;      /**< 上下文切换次数 */
-    uint32_t waiting_io_count;  /**< 当前处于 CO_STATE_WAITING（等待 I/O）的协程数 */
+    // Statistics
+    uint64_t total_routines;    /**< Total number of created coroutines */
+    uint64_t active_routines;   /**< Number of currently active coroutines */
+    uint64_t switch_count;      /**< Number of context switches */
+    uint32_t waiting_io_count;  /**< Number of coroutines waiting for I/O */
     
-    // ID 生成器
-    uint64_t next_id;           /**< 下一个协程 ID */
+    // ID generator
+    uint64_t next_id;           /**< Next coroutine ID */
 };
 
 // ============================================================================
-// 调度器函数声明
+// Scheduler function declarations
 // ============================================================================
 
 /**
- * @brief 调度下一个协程
- * @param sched 调度器指针
- * @return CO_OK 成功，其他值表示错误
+ * @brief Schedule the next coroutine
+ * @param sched Scheduler pointer
+ * @return CO_OK on success, other values indicate errors
  */
 co_error_t co_scheduler_schedule(co_scheduler_t *sched);
 
 /**
- * @brief 将协程加入就绪队列
- * @param sched 调度器指针
- * @param routine 协程指针
+ * @brief Enqueue a coroutine in the ready queue
+ * @param sched Scheduler pointer
+ * @param routine Coroutine pointer
  */
 void co_scheduler_enqueue(co_scheduler_t *sched, co_routine_t *routine);
 
 /**
- * @brief 从就绪队列中取出下一个协程
- * @param sched 调度器指针
- * @return 协程指针，队列为空返回 NULL
+ * @brief Dequeue the next coroutine from the ready queue
+ * @param sched Scheduler pointer
+ * @return Coroutine pointer, or NULL if the queue is empty
  */
 co_routine_t *co_scheduler_dequeue(co_scheduler_t *sched);
 
 /**
- * @brief 获取当前线程的调度器
- * @return 调度器指针，未运行返回 NULL
+ * @brief Get the scheduler for the current thread
+ * @return Scheduler pointer, or NULL if not running
  */
 co_scheduler_t *co_current_scheduler(void);
 
 /**
- * @brief 获取当前运行的协程
- * @return 协程指针，未运行返回 NULL
+ * @brief Get the currently running coroutine
+ * @return Coroutine pointer, or NULL if none is running
  */
 co_routine_t *co_current_routine(void);
 

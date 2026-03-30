@@ -1,6 +1,6 @@
 /**
  * @file co_channel.h
- * @brief 协程 Channel 内部结构定义
+ * @brief Internal coroutine channel structure definition
  */
 
 #ifndef LIBCO_SYNC_CO_CHANNEL_H
@@ -15,27 +15,28 @@ extern "C" {
 #endif
 
 /**
- * @brief Channel 内部结构
+ * @brief Internal channel structure
  *
- * 有界环形缓冲区 + 两个等待队列（send_queue / recv_queue）。
- * capacity == 0 表示无缓冲 channel（rendezvous 语义）。
+ * Bounded ring buffer plus two wait queues (send_queue and recv_queue).
+ * capacity == 0 creates an unbuffered channel with rendezvous semantics.
  *
- * 等待队列复用协程已有的 queue_node（WAITING 状态下节点空闲），
- * 协程的 chan_data 指针临时存储 send 时的源指针或 recv 时的目标指针。
+ * Wait queues reuse each coroutine's queue_node because it is free while the
+ * coroutine is in the WAITING state. chan_data temporarily stores the source
+ * pointer for send or the destination pointer for recv.
  */
 struct co_channel {
-    size_t elem_size;   /**< 每个元素的字节数 */
-    size_t capacity;    /**< 缓冲区容量（0 = 无缓冲） */
+    size_t elem_size;   /**< Size of each element in bytes */
+    size_t capacity;    /**< Buffer capacity, or 0 for unbuffered */
 
-    /* 环形缓冲区 */
+    /* Ring buffer */
     void   *buffer;
-    size_t  head;       /**< 下一个出队位置 */
-    size_t  tail;       /**< 下一个入队位置 */
-    size_t  count;      /**< 当前缓冲元素数 */
+    size_t  head;       /**< Next dequeue position */
+    size_t  tail;       /**< Next enqueue position */
+    size_t  count;      /**< Number of buffered elements */
 
-    /* 等待队列 */
-    co_queue_t send_queue;  /**< 等待发送的协程（缓冲区满） */
-    co_queue_t recv_queue;  /**< 等待接收的协程（缓冲区空） */
+    /* Wait queues */
+    co_queue_t send_queue;  /**< Coroutines waiting to send when the buffer is full */
+    co_queue_t recv_queue;  /**< Coroutines waiting to receive when the buffer is empty */
 
     bool closed;
 };

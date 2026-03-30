@@ -1,8 +1,8 @@
 /**
  * @file test_allocator.c
- * @brief 自定义分配器单元测试
+ * @brief Custom allocator unit tests
  * 
- * 测试自定义内存分配器功能。
+ * Tests custom memory allocator behavior.
  */
 
 #include "unity.h"
@@ -12,10 +12,10 @@
 #include <string.h>
 
 // ============================================================================
-// 测试辅助
+// Test helpers
 // ============================================================================
 
-// 自定义分配器的统计信息
+// Statistics for the custom allocator
 static struct {
     size_t malloc_count;
     size_t realloc_count;
@@ -24,14 +24,14 @@ static struct {
 } g_alloc_stats;
 
 /**
- * @brief 重置统计信息
+ * @brief Reset the statistics
  */
 static void reset_stats(void) {
     memset(&g_alloc_stats, 0, sizeof(g_alloc_stats));
 }
 
 /**
- * @brief 自定义 malloc 函数
+ * @brief Custom malloc function
  */
 static void *custom_malloc(size_t size, void *userdata) {
     (void)userdata;
@@ -41,7 +41,7 @@ static void *custom_malloc(size_t size, void *userdata) {
 }
 
 /**
- * @brief 自定义 realloc 函数
+ * @brief Custom realloc function
  */
 static void *custom_realloc(void *ptr, size_t size, void *userdata) {
     (void)userdata;
@@ -50,7 +50,7 @@ static void *custom_realloc(void *ptr, size_t size, void *userdata) {
 }
 
 /**
- * @brief 自定义 free 函数
+ * @brief Custom free function
  */
 static void custom_free(void *ptr, void *userdata) {
     (void)userdata;
@@ -60,29 +60,29 @@ static void custom_free(void *ptr, void *userdata) {
 
 void setUp(void) {
     reset_stats();
-    // 恢复默认分配器
+    // Restore the default allocator
     co_set_allocator(NULL);
 }
 
 void tearDown(void) {
-    // 恢复默认分配器
+    // Restore the default allocator
     co_set_allocator(NULL);
 }
 
 // ============================================================================
-// 分配器设置和获取测试
+// Allocator set/get tests
 // ============================================================================
 
 /**
- * @brief 测试默认分配器
+ * @brief Test the default allocator
  */
 void test_default_allocator(void) {
     const co_allocator_t *allocator = co_get_allocator();
-    TEST_ASSERT_NULL(allocator);  // 默认情况下应该返回 NULL
+    TEST_ASSERT_NULL(allocator);  // The default allocator should be NULL
 }
 
 /**
- * @brief 测试设置自定义分配器
+ * @brief Test setting a custom allocator
  */
 void test_set_custom_allocator(void) {
     co_allocator_t allocator = {
@@ -102,7 +102,7 @@ void test_set_custom_allocator(void) {
 }
 
 /**
- * @brief 测试恢复默认分配器
+ * @brief Test restoring the default allocator
  */
 void test_restore_default_allocator(void) {
     co_allocator_t allocator = {
@@ -112,35 +112,35 @@ void test_restore_default_allocator(void) {
         .userdata = NULL
     };
     
-    // 设置自定义分配器
+    // Set a custom allocator
     co_set_allocator(&allocator);
     TEST_ASSERT_NOT_NULL(co_get_allocator());
     
-    // 恢复默认分配器
+    // Restore the default allocator
     co_set_allocator(NULL);
     TEST_ASSERT_NULL(co_get_allocator());
 }
 
 // ============================================================================
-// 分配器功能测试
+// Allocator functionality tests
 // ============================================================================
 
 /**
- * @brief 测试使用默认分配器
+ * @brief Test using the default allocator
  */
 void test_use_default_allocator(void) {
-    // 使用默认分配器分配内存
+     // Allocate memory with the default allocator
     void *ptr = co_malloc(1024);
     TEST_ASSERT_NOT_NULL(ptr);
     
-    // 验证统计（默认分配器不计数）
+     // Verify statistics; the default allocator is not counted
     TEST_ASSERT_EQUAL_UINT(0, g_alloc_stats.malloc_count);
     
     co_free(ptr);
 }
 
 /**
- * @brief 测试使用自定义分配器
+ * @brief Test using a custom allocator
  */
 void test_use_custom_allocator(void) {
     co_allocator_t allocator = {
@@ -151,21 +151,21 @@ void test_use_custom_allocator(void) {
     };
     co_set_allocator(&allocator);
     
-    // 分配内存
+    // Allocate memory
     void *ptr = co_malloc(1024);
     TEST_ASSERT_NOT_NULL(ptr);
     
-    // 验证统计
+    // Verify statistics
     TEST_ASSERT_EQUAL_UINT(1, g_alloc_stats.malloc_count);
     TEST_ASSERT_EQUAL_UINT(1024, g_alloc_stats.bytes_allocated);
     
-    // 释放内存
+    // Free memory
     co_free(ptr);
     TEST_ASSERT_EQUAL_UINT(1, g_alloc_stats.free_count);
 }
 
 /**
- * @brief 测试 co_calloc
+ * @brief Test co_calloc
  */
 void test_co_calloc(void) {
     co_allocator_t allocator = {
@@ -176,18 +176,18 @@ void test_co_calloc(void) {
     };
     co_set_allocator(&allocator);
     
-    // 分配并清零
+    // Allocate and zero-initialize
     size_t count = 10;
     size_t size = sizeof(int);
     int *arr = (int *)co_calloc(count, size);
     TEST_ASSERT_NOT_NULL(arr);
     
-    // 验证已清零
+    // Verify the memory was zero-initialized
     for (size_t i = 0; i < count; i++) {
         TEST_ASSERT_EQUAL_INT(0, arr[i]);
     }
     
-    // 验证统计
+    // Verify statistics
     TEST_ASSERT_EQUAL_UINT(1, g_alloc_stats.malloc_count);
     TEST_ASSERT_EQUAL_UINT(count * size, g_alloc_stats.bytes_allocated);
     
@@ -195,7 +195,7 @@ void test_co_calloc(void) {
 }
 
 /**
- * @brief 测试 co_realloc
+ * @brief Test co_realloc
  */
 void test_co_realloc(void) {
     co_allocator_t allocator = {
@@ -206,12 +206,12 @@ void test_co_realloc(void) {
     };
     co_set_allocator(&allocator);
     
-    // 初始分配
+    // Initial allocation
     void *ptr = co_malloc(512);
     TEST_ASSERT_NOT_NULL(ptr);
     TEST_ASSERT_EQUAL_UINT(1, g_alloc_stats.malloc_count);
     
-    // 重新分配
+    // Reallocate
     void *new_ptr = co_realloc(ptr, 1024);
     TEST_ASSERT_NOT_NULL(new_ptr);
     TEST_ASSERT_EQUAL_UINT(1, g_alloc_stats.realloc_count);
@@ -220,7 +220,7 @@ void test_co_realloc(void) {
 }
 
 /**
- * @brief 测试释放 NULL 指针
+ * @brief Test freeing a NULL pointer
  */
 void test_free_null(void) {
     co_allocator_t allocator = {
@@ -231,19 +231,19 @@ void test_free_null(void) {
     };
     co_set_allocator(&allocator);
     
-    // 释放 NULL 应该安全
+    // Freeing NULL should be safe
     co_free(NULL);
     
-    // 不应该调用自定义的 free 函数
+    // The custom free function should not be called
     TEST_ASSERT_EQUAL_UINT(0, g_alloc_stats.free_count);
 }
 
 // ============================================================================
-// 用户数据测试
+// User data tests
 // ============================================================================
 
 /**
- * @brief 测试分配器用户数据
+ * @brief Test allocator user data
  */
 void test_allocator_userdata(void) {
     int userdata_value = 12345;
@@ -262,11 +262,11 @@ void test_allocator_userdata(void) {
 }
 
 // ============================================================================
-// 多次分配测试
+// Repeated allocation tests
 // ============================================================================
 
 /**
- * @brief 测试多次分配和释放
+ * @brief Test repeated allocation and release
  */
 void test_multiple_alloc_free(void) {
     co_allocator_t allocator = {
@@ -281,7 +281,7 @@ void test_multiple_alloc_free(void) {
     void **ptrs = (void **)malloc(count * sizeof(void *));
     TEST_ASSERT_NOT_NULL(ptrs);
     
-    // 多次分配
+    // Allocate multiple times
     for (int i = 0; i < count; i++) {
         ptrs[i] = co_malloc(1024 * (i + 1));
         TEST_ASSERT_NOT_NULL(ptrs[i]);
@@ -289,7 +289,7 @@ void test_multiple_alloc_free(void) {
     
     TEST_ASSERT_EQUAL_UINT(count, g_alloc_stats.malloc_count);
     
-    // 多次释放
+    // Free multiple times
     for (int i = 0; i < count; i++) {
         co_free(ptrs[i]);
     }
@@ -300,28 +300,28 @@ void test_multiple_alloc_free(void) {
 }
 
 // ============================================================================
-// 主函数
+// Main function
 // ============================================================================
 
 int main(void) {
     UNITY_BEGIN();
     
-    // 设置和获取
+    // Set/get tests
     RUN_TEST(test_default_allocator);
     RUN_TEST(test_set_custom_allocator);
     RUN_TEST(test_restore_default_allocator);
     
-    // 功能测试
+    // Functionality tests
     RUN_TEST(test_use_default_allocator);
     RUN_TEST(test_use_custom_allocator);
     RUN_TEST(test_co_calloc);
     RUN_TEST(test_co_realloc);
     RUN_TEST(test_free_null);
     
-    // 用户数据
+    // User data tests
     RUN_TEST(test_allocator_userdata);
     
-    // 多次分配
+    // Repeated allocations
     RUN_TEST(test_multiple_alloc_free);
     
     return UNITY_END();

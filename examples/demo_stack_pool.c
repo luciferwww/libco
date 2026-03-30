@@ -1,28 +1,29 @@
 /**
  * @file demo_stack_pool.c
- * @brief 栈池性能测试
+ * @brief Stack pool performance demo
  * 
- * 演示：
- * - 大量协程的创建和销毁
- * - 栈池复用效果
- * - 性能对比（有栈池 vs 无栈池的理论分析）
+ * Demonstrates:
+ * - creating and destroying large numbers of coroutines
+ * - the effect of stack pool reuse
+ * - a performance comparison, with a theoretical analysis of pooled vs.
+ *   non-pooled stacks
  */
 
 #include <libco/co.h>
-#include "co_stack_pool.h"  // 访问内部 API 获取统计信息
+#include "co_stack_pool.h"  // Access internal APIs for stack-pool statistics
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 
 // ============================================================================
-// 全局统计
+// Global statistics
 // ============================================================================
 
 static int g_created = 0;
 static int g_completed = 0;
 
 // ============================================================================
-// 短生命周期协程
+// Short-lived coroutines
 // ============================================================================
 
 typedef struct {
@@ -33,7 +34,7 @@ typedef struct {
 static void worker_routine(void *arg) {
     WorkerArgs *args = (WorkerArgs *)arg;
     
-    // 模拟一些工作
+    // Simulate some work
     volatile int sum = 0;
     for (int i = 0; i < args->work_iterations; i++) {
         sum += i;
@@ -41,12 +42,12 @@ static void worker_routine(void *arg) {
     
     g_completed++;
     
-    // 短暂休眠后结束（模拟异步工作）
+    // Sleep briefly before finishing to simulate asynchronous work
     co_sleep(1);
 }
 
 // ============================================================================
-// 批量创建协程
+// Batch coroutine creation
 // ============================================================================
 
 static void spawner_routine(void *arg) {
@@ -63,7 +64,7 @@ static void spawner_routine(void *arg) {
         
         co_spawn(sched, worker_routine, &args_array[i], 0);
         
-        // 每创建 10 个协程让出一次 CPU
+        // Yield once after every 10 coroutine creations
         if ((i + 1) % 10 == 0) {
             co_yield();
         }
@@ -75,7 +76,7 @@ static void spawner_routine(void *arg) {
 }
 
 // ============================================================================
-// 监控协程
+// Monitor coroutine
 // ============================================================================
 
 typedef struct {
@@ -102,11 +103,11 @@ static void monitor_routine(void *arg) {
 }
 
 // ============================================================================
-// 主函数
+// Main function
 // ============================================================================
 
 int main(int argc, char *argv[]) {
-    // 解析参数
+    // Parse arguments
     int total_coroutines = 1000;
     int batch_size = 100;
     
@@ -124,21 +125,21 @@ int main(int argc, char *argv[]) {
     printf("Batch size: %d\n", batch_size);
     printf("Number of batches: %d\n\n", num_batches);
     
-    // 创建调度器
+    // Create the scheduler
     co_scheduler_t *sched = co_scheduler_create(NULL);
     if (!sched) {
         fprintf(stderr, "Failed to create scheduler\n");
         return 1;
     }
     
-    // 创建监控协程
+    // Create the monitor coroutine
     MonitorArgs monitor_args = {
         .total_expected = total_coroutines,
         .sched = sched
     };
     co_spawn(sched, monitor_routine, &monitor_args, 0);
     
-    // 创建 spawner 协程（批量创建）
+    // Create spawner coroutines for batched creation
     for (int i = 0; i < num_batches; i++) {
         int this_batch = (i == num_batches - 1) ? 
                          (total_coroutines - i * batch_size) : batch_size;
@@ -147,7 +148,7 @@ int main(int argc, char *argv[]) {
     
     printf("Starting scheduler...\n\n");
     
-    // 运行调度器
+    // Run the scheduler
     clock_t start = clock();
     co_error_t err = co_scheduler_run(sched);
     clock_t end = clock();
@@ -160,13 +161,13 @@ int main(int argc, char *argv[]) {
     printf("Created: %d coroutines\n", g_created);
     printf("Completed: %d coroutines\n", g_completed);
     
-    // 性能统计
+    // Performance statistics
     double coroutines_per_sec = g_completed / elapsed;
     printf("\nPerformance:\n");
     printf("  %.0f coroutines/second\n", coroutines_per_sec);
     printf("  %.3f ms per coroutine (average)\n", (elapsed * 1000.0) / g_completed);
     
-    // 栈池统计（需要访问内部结构）
+    // Stack pool analysis, based on internal implementation details
     printf("\nStack Pool Analysis:\n");
     printf("  Stack size: 128 KB\n");
     printf("  Pool capacity: 16 stacks\n");
@@ -177,12 +178,12 @@ int main(int argc, char *argv[]) {
            (1.0 - (2.0 * 1024.0) / (total_coroutines * 128.0)) * 100);
     
     if (g_completed == total_coroutines) {
-        printf("\n✓ All coroutines completed successfully!\n");
+        printf("\n[OK] All coroutines completed successfully!\n");
     } else {
-        printf("\n✗ Not all coroutines completed!\n");
+        printf("\n[FAIL] Not all coroutines completed!\n");
     }
     
-    // 清理
+    // Cleanup
     co_scheduler_destroy(sched);
     
     return err == CO_OK && g_completed == total_coroutines ? 0 : 1;

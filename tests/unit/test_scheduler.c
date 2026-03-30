@@ -1,8 +1,8 @@
 /**
  * @file test_scheduler.c
- * @brief 调度器单元测试
+ * @brief Scheduler unit tests
  * 
- * 测试调度器的基本功能。
+ * Tests basic scheduler behavior.
  */
 
 #include "unity.h"
@@ -12,10 +12,10 @@
 #include <string.h>
 
 // ============================================================================
-// 测试辅助
+// Test helpers
 // ============================================================================
 
-// 全局计数器
+// Global counters
 static int g_test_counter = 0;
 static int g_test_values[10] = {0};
 
@@ -25,15 +25,15 @@ void setUp(void) {
 }
 
 void tearDown(void) {
-    // 清理工作
+    // Cleanup work
 }
 
 // ============================================================================
-// 测试协程函数
+// Test coroutine functions
 // ============================================================================
 
 /**
- * @brief 简单的测试协程
+ * @brief Simple test coroutine
  */
 static void test_coroutine_simple(void *arg) {
     int *counter = (int *)arg;
@@ -41,7 +41,7 @@ static void test_coroutine_simple(void *arg) {
 }
 
 /**
- * @brief 带 yield 的测试协程
+ * @brief Test coroutine with a yield
  */
 static void test_coroutine_with_yield(void *arg) {
     int *counter = (int *)arg;
@@ -51,7 +51,7 @@ static void test_coroutine_with_yield(void *arg) {
 }
 
 /**
- * @brief 多次 yield 的测试协程
+ * @brief Test coroutine with multiple yields
  */
 static void test_coroutine_multi_yield(void *arg) {
     int index = *(int *)arg;
@@ -62,11 +62,11 @@ static void test_coroutine_multi_yield(void *arg) {
 }
 
 // ============================================================================
-// 调度器创建和销毁测试
+// Scheduler creation and destruction tests
 // ============================================================================
 
 /**
- * @brief 测试调度器创建和销毁
+ * @brief Test scheduler creation and destruction
  */
 void test_scheduler_create_destroy(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
@@ -77,13 +77,13 @@ void test_scheduler_create_destroy(void) {
 }
 
 /**
- * @brief 测试调度器运行（空队列）
+ * @brief Test running a scheduler with an empty queue
  */
 void test_scheduler_run_empty(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
     TEST_ASSERT_NOT_NULL(sched);
     
-    // 运行空调度器应该立即返回
+    // Running an empty scheduler should return immediately
     co_error_t err = co_scheduler_run(sched);
     TEST_ASSERT_EQUAL_INT(CO_OK, err);
     
@@ -91,99 +91,99 @@ void test_scheduler_run_empty(void) {
 }
 
 // ============================================================================
-// 协程创建和执行测试
+// Coroutine creation and execution tests
 // ============================================================================
 
 /**
- * @brief 测试单个协程执行
+ * @brief Test single coroutine execution
  */
 void test_single_coroutine(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
     TEST_ASSERT_NOT_NULL(sched);
     
-    // 创建协程
+    // Create the coroutine
     co_routine_t *co = co_spawn(sched, test_coroutine_simple, &g_test_counter, 0);
     TEST_ASSERT_NOT_NULL(co);
     
-    // 验证初始状态
+    // Verify initial state
     TEST_ASSERT_EQUAL_INT(0, g_test_counter);
     
-    // 运行调度器
+    // Run the scheduler
     co_error_t err = co_scheduler_run(sched);
     TEST_ASSERT_EQUAL_INT(CO_OK, err);
     
-    // 验证协程已执行
+    // Verify that the coroutine executed
     TEST_ASSERT_EQUAL_INT(1, g_test_counter);
     
     co_scheduler_destroy(sched);
 }
 
 /**
- * @brief 测试多个协程顺序执行
+ * @brief Test sequential execution of multiple coroutines
  */
 void test_multiple_coroutines(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
     TEST_ASSERT_NOT_NULL(sched);
     
-    // 创建多个协程
+    // Create multiple coroutines
     for (int i = 0; i < 5; i++) {
         co_routine_t *co = co_spawn(sched, test_coroutine_simple, &g_test_counter, 0);
         TEST_ASSERT_NOT_NULL(co);
     }
     
-    // 验证初始状态
+    // Verify initial state
     TEST_ASSERT_EQUAL_INT(0, g_test_counter);
     
-    // 运行调度器
+    // Run the scheduler
     co_error_t err = co_scheduler_run(sched);
     TEST_ASSERT_EQUAL_INT(CO_OK, err);
     
-    // 验证所有协程都执行了
+    // Verify that all coroutines executed
     TEST_ASSERT_EQUAL_INT(5, g_test_counter);
     
     co_scheduler_destroy(sched);
 }
 
 /**
- * @brief 测试协程 yield
+ * @brief Test coroutine yield
  */
 void test_coroutine_yield(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
     TEST_ASSERT_NOT_NULL(sched);
     
-    // 创建带 yield 的协程
+    // Create a coroutine that yields
     co_routine_t *co = co_spawn(sched, test_coroutine_with_yield, &g_test_counter, 0);
     TEST_ASSERT_NOT_NULL(co);
     
-    // 运行调度器
+    // Run the scheduler
     co_error_t err = co_scheduler_run(sched);
     TEST_ASSERT_EQUAL_INT(CO_OK, err);
     
-    // 验证协程完整执行（包括 yield 后的部分）
+    // Verify full execution, including the part after yielding
     TEST_ASSERT_EQUAL_INT(2, g_test_counter);
     
     co_scheduler_destroy(sched);
 }
 
 /**
- * @brief 测试多个协程交替执行
+ * @brief Test interleaved execution of multiple coroutines
  */
 void test_coroutines_interleaved(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
     TEST_ASSERT_NOT_NULL(sched);
     
-    // 创建3个协程，每个会 yield 3次
+    // Create three coroutines, each yielding three times
     int indices[3] = {0, 1, 2};
     for (int i = 0; i < 3; i++) {
         co_routine_t *co = co_spawn(sched, test_coroutine_multi_yield, &indices[i], 0);
         TEST_ASSERT_NOT_NULL(co);
     }
     
-    // 运行调度器
+    // Run the scheduler
     co_error_t err = co_scheduler_run(sched);
     TEST_ASSERT_EQUAL_INT(CO_OK, err);
     
-    // 验证每个协程都执行了3次
+    // Verify that each coroutine ran three times
     TEST_ASSERT_EQUAL_INT(3, g_test_values[0]);
     TEST_ASSERT_EQUAL_INT(3, g_test_values[1]);
     TEST_ASSERT_EQUAL_INT(3, g_test_values[2]);
@@ -192,17 +192,17 @@ void test_coroutines_interleaved(void) {
 }
 
 // ============================================================================
-// 嵌套协程测试
+// Nested coroutine tests
 // ============================================================================
 
 /**
- * @brief 在协程中创建协程
+ * @brief Create a coroutine from inside another coroutine
  */
 static void test_coroutine_spawn_nested(void *arg) {
     int *counter = (int *)arg;
     (*counter)++;
     
-    // 在协程中创建新协程
+    // Create a new coroutine from inside a coroutine
     co_scheduler_t *sched = co_current_scheduler();
     if (sched && *counter < 3) {
         co_spawn(sched, test_coroutine_spawn_nested, counter, 0);
@@ -210,46 +210,46 @@ static void test_coroutine_spawn_nested(void *arg) {
 }
 
 /**
- * @brief 测试嵌套协程创建
+ * @brief Test nested coroutine creation
  */
 void test_nested_spawn(void) {
     co_scheduler_t *sched = co_scheduler_create(NULL);
     TEST_ASSERT_NOT_NULL(sched);
     
-    // 创建第一个协程，它会递归创建更多协程
+    // Create the first coroutine; it will recursively spawn more coroutines
     co_routine_t *co = co_spawn(sched, test_coroutine_spawn_nested, &g_test_counter, 0);
     TEST_ASSERT_NOT_NULL(co);
     
-    // 运行调度器
+    // Run the scheduler
     co_error_t err = co_scheduler_run(sched);
     TEST_ASSERT_EQUAL_INT(CO_OK, err);
     
-    // 验证所有嵌套协程都执行了
+    // Verify that all nested coroutines executed
     TEST_ASSERT_EQUAL_INT(3, g_test_counter);
     
     co_scheduler_destroy(sched);
 }
 
 // ============================================================================
-// 主函数
+// Main function
 // ============================================================================
 
 int main(void) {
     UNITY_BEGIN();
     
-    // 调度器基本测试
+    // Basic scheduler tests
     RUN_TEST(test_scheduler_create_destroy);
     RUN_TEST(test_scheduler_run_empty);
     
-    // 协程执行测试
+    // Coroutine execution tests
     RUN_TEST(test_single_coroutine);
     RUN_TEST(test_multiple_coroutines);
     
-    // Yield 测试
+    // Yield tests
     RUN_TEST(test_coroutine_yield);
     RUN_TEST(test_coroutines_interleaved);
     
-    // 嵌套测试
+    // Nested tests
     RUN_TEST(test_nested_spawn);
     
     return UNITY_END();

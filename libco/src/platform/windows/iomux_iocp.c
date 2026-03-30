@@ -1,18 +1,18 @@
 /**
  * @file iomux_iocp.c
- * @brief Windows IOCP (I/O Completion Ports) 实现
+ * @brief Windows IOCP (I/O Completion Ports) implementation
  * 
- * 使用 Windows 的 IOCP 实现 I/O 多路复用。
- * IOCP 是 Windows 的高性能异步 I/O 机制。
+ * Implements I/O multiplexing with Windows IOCP.
+ * IOCP is Windows' high-performance asynchronous I/O mechanism.
  * 
- * 注意：IOCP 是完全异步的（Asynchronous I/O），
- * 而 epoll/kqueue 是同步非阻塞的（Synchronous Non-blocking I/O）。
- * 这里我们将 IOCP 的异步模型适配为协程的同步风格。
+ * Note: IOCP is fully asynchronous, while epoll/kqueue are synchronous
+ * non-blocking models. This file adapts IOCP's asynchronous model to a
+ * synchronous coroutine-friendly style.
  */
 
 #ifdef _WIN32
 
-// GetQueuedCompletionStatusEx 需要 Windows Vista (0x0600) 或更高版本
+// GetQueuedCompletionStatusEx requires Windows Vista (0x0600) or newer
 #if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600
 #  undef _WIN32_WINNT
 #  define _WIN32_WINNT 0x0600
@@ -28,36 +28,36 @@
 #include <stdlib.h>
 #include <assert.h>
 
-// 链接 Winsock 库
+// Link Winsock libraries
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "mswsock.lib")
 
 // ============================================================================
-// IOCP 实现结构
+// IOCP implementation structure
 // ============================================================================
 
 /**
- * @brief IOCP I/O 多路复用器
+ * @brief IOCP I/O multiplexer
  */
 struct co_iomux {
-    HANDLE iocp;                    /**< IOCP 句柄 */
-    int max_events;                 /**< 最大事件数（一次 poll 最多取出的完成包数） */
-    OVERLAPPED_ENTRY *entries;      /**< 批量完成包缓冲区（GetQueuedCompletionStatusEx 用） */
+    HANDLE iocp;                    /**< IOCP handle */
+    int max_events;                 /**< Maximum completions returned by one poll */
+    OVERLAPPED_ENTRY *entries;      /**< Completion packet buffer for GetQueuedCompletionStatusEx */
 
-    // Winsock 初始化标志
+    // Winsock initialization flag
     bool wsa_initialized;
     
-    // 已关联的套接字集合（简化实现：使用固定数组）
-    // 实际应用中应该使用哈希表
+    // Associated socket set, simplified as a fixed array.
+    // Real-world code should use a hash table.
     co_socket_t associated_sockets[1024];
     int associated_count;
 };
 
 // ============================================================================
-// AcceptEx/ConnectEx 函数指针（运行时获取）
+// AcceptEx/ConnectEx function pointers loaded at runtime
 // ============================================================================
 
-// AcceptEx 函数原型
+// AcceptEx function prototype
 typedef BOOL (WINAPI *LPFN_ACCEPTEX)(
     SOCKET sListenSocket,
     SOCKET sAcceptSocket,
@@ -69,7 +69,7 @@ typedef BOOL (WINAPI *LPFN_ACCEPTEX)(
     LPOVERLAPPED lpOverlapped
 );
 
-// ConnectEx 函数原型
+// ConnectEx function prototype
 typedef BOOL (WINAPI *LPFN_CONNECTEX)(
     SOCKET s,
     const struct sockaddr *name,
@@ -80,7 +80,7 @@ typedef BOOL (WINAPI *LPFN_CONNECTEX)(
     LPOVERLAPPED lpOverlapped
 );
 
-// GetAcceptExSockaddrs 函数原型
+// GetAcceptExSockaddrs function prototype
 typedef VOID (WINAPI *LPFN_GETACCEPTEXSOCKADDRS)(
     PVOID lpOutputBuffer,
     DWORD dwReceiveDataLength,
@@ -92,21 +92,21 @@ typedef VOID (WINAPI *LPFN_GETACCEPTEXSOCKADDRS)(
     LPINT RemoteSockaddrLength
 );
 
-// 全局函数指针（延迟加载）
+// Global function pointers loaded lazily
 static LPFN_ACCEPTEX g_AcceptEx = NULL;
 static LPFN_CONNECTEX g_ConnectEx = NULL;
 static LPFN_GETACCEPTEXSOCKADDRS g_GetAcceptExSockaddrs = NULL;
 static bool g_ext_funcs_loaded = false;
 
 /**
- * @brief 加载 AcceptEx/ConnectEx 扩展函数
+ * @brief Load AcceptEx and ConnectEx extension functions
  */
 static bool load_extension_functions(void) {
     if (g_ext_funcs_loaded) {
         return true;
     }
     
-    // 创建临时套接字用于获取函数指针
+    // Create a temporary socket to query the function pointers
     SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock == INVALID_SOCKET) {
         fprintf(stderr, "Failed to create temp socket for extension functions\n");
@@ -115,7 +115,7 @@ static bool load_extension_functions(void) {
     
     DWORD bytes = 0;
     
-    // 获取 AcceptEx 函数指针
+    // Query the AcceptEx function pointer
     GUID acceptex_guid = WSAID_ACCEPTEX;
     if (WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
                  &acceptex_guid, sizeof(acceptex_guid),
@@ -126,7 +126,7 @@ static bool load_extension_functions(void) {
         return false;
     }
     
-    // 获取 ConnectEx 函数指针
+    // Query the ConnectEx function pointer
     GUID connectex_guid = WSAID_CONNECTEX;
     if (WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
                  &connectex_guid, sizeof(connectex_guid),
@@ -137,7 +137,7 @@ static bool load_extension_functions(void) {
         return false;
     }
     
-    // 获取 GetAcceptExSockaddrs 函数指针
+    // Query the GetAcceptExSockaddrs function pointer
     GUID getacceptexsockaddrs_guid = WSAID_GETACCEPTEXSOCKADDRS;
     if (WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
                  &getacceptexsockaddrs_guid, sizeof(getacceptexsockaddrs_guid),
@@ -155,7 +155,7 @@ static bool load_extension_functions(void) {
 }
 
 // ============================================================================
-// 全局 Winsock 初始化
+// Global Winsock initialization
 // ============================================================================
 
 static bool g_wsa_init = false;
@@ -177,7 +177,7 @@ static bool init_winsock(void) {
 }
 
 // ============================================================================
-// I/O 多路复用器实现
+// I/O multiplexer implementation
 // ============================================================================
 
 co_iomux_t *co_iomux_create(int max_events) {
@@ -194,11 +194,11 @@ co_iomux_t *co_iomux_create(int max_events) {
         return NULL;
     }
     
-    // 创建 IOCP
-    // 参数：
-    // 1. INVALID_HANDLE_VALUE - 创建新的 IOCP
-    // 2. NULL - 现有 IOCP（这里是新建）
-    // 3. 0 - 并发线程数（0 = CPU 核心数）
+    // Create the IOCP.
+    // Parameters:
+    // 1. INVALID_HANDLE_VALUE - create a new IOCP
+    // 2. NULL - existing IOCP handle, omitted here
+    // 3. 0 - concurrency level, meaning use the CPU core count
     iomux->iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
     if (iomux->iocp == NULL) {
         fprintf(stderr, "CreateIoCompletionPort failed: %lu\n", GetLastError());
@@ -211,7 +211,7 @@ co_iomux_t *co_iomux_create(int max_events) {
     iomux->associated_count = 0;
     memset(iomux->associated_sockets, 0, sizeof(iomux->associated_sockets));
 
-    // 分配批量完成包缓冲区
+    // Allocate the completion packet buffer
     iomux->entries = (OVERLAPPED_ENTRY *)calloc(max_events, sizeof(OVERLAPPED_ENTRY));
     if (!iomux->entries) {
         CloseHandle(iomux->iocp);
@@ -240,7 +240,7 @@ co_error_t co_iomux_add(co_iomux_t *iomux, co_io_wait_ctx_t *wait_ctx) {
         return CO_ERROR_INVAL;
     }
     
-    // 检查套接字是否已关联
+    // Check whether the socket has already been associated
     bool already_associated = false;
     for (int i = 0; i < iomux->associated_count; i++) {
         if (iomux->associated_sockets[i] == wait_ctx->fd) {
@@ -250,54 +250,54 @@ co_error_t co_iomux_add(co_iomux_t *iomux, co_io_wait_ctx_t *wait_ctx) {
     }
     
     if (already_associated) {
-        // 已经关联过，跳过
+        // Already associated, nothing to do
         return CO_OK;
     }
     
-    // 将套接字关联到 IOCP
-    // 参数：
-    // 1. (HANDLE)wait_ctx->fd - 文件句柄（套接字可以转为 HANDLE）
-    // 2. iomux->iocp - IOCP 句柄
-    // 3. 0 - Completion Key（使用 0，通过 OVERLAPPED 来定位 wait_ctx）
-    // 4. 0 - 并发线程数（0 = 使用创建时的值）
-    // 
-    // 注意：我们使用 0 作为 CompletionKey，因为对于监听套接字的 AcceptEx，
-    // 每次操作的 wait_ctx 都不同，不能用作 CompletionKey。
-    // 我们通过 OVERLAPPED 指针来定位具体的 wait_ctx。
+    // Associate the socket with the IOCP.
+    // Parameters:
+    // 1. (HANDLE)wait_ctx->fd - file handle, sockets can be cast to HANDLE
+    // 2. iomux->iocp - the IOCP handle
+    // 3. 0 - completion key; OVERLAPPED is used to recover wait_ctx instead
+    // 4. 0 - keep the concurrency level from IOCP creation
+    //
+    // CompletionKey is left as 0 because AcceptEx on a listening socket may
+    // use a different wait_ctx for each operation. The OVERLAPPED pointer is
+    // used to identify the specific wait_ctx.
     HANDLE h = CreateIoCompletionPort((HANDLE)wait_ctx->fd, iomux->iocp, 0, 0);
     if (h == NULL) {
         fprintf(stderr, "CreateIoCompletionPort (associate) failed: %lu\n", GetLastError());
         return CO_ERROR_PLATFORM;
     }
     
-    // 记录已关联的套接字
+    // Record the associated socket
     if (iomux->associated_count < 1024) {
         iomux->associated_sockets[iomux->associated_count++] = wait_ctx->fd;
     }
     
-    // 初始化 OVERLAPPED 结构
+    // Initialize the OVERLAPPED structure
     memset(&wait_ctx->overlapped, 0, sizeof(wait_ctx->overlapped));
     
     return CO_OK;
 }
 
 co_error_t co_iomux_mod(co_iomux_t *iomux, co_io_wait_ctx_t *wait_ctx) {
-    // IOCP 不需要修改操作，每次 I/O 都会投递新的异步请求
-    (void)iomux;     // 未使用
-    (void)wait_ctx;  // 未使用
+    // IOCP does not need a modify operation; every I/O issues a fresh async request
+    (void)iomux;     // Unused
+    (void)wait_ctx;  // Unused
     return CO_OK;
 }
 
 co_error_t co_iomux_del(co_iomux_t *iomux, co_socket_t fd) {
-    // IOCP 不需要显式删除操作
-    // 当套接字关闭时，关联会自动解除
-    // 但需要从 associated_sockets 数组中移除记录，防止数组满后无法跟踪新套接字
+    // IOCP does not require explicit deletion.
+    // Closing the socket removes the association automatically, but the local
+    // bookkeeping array still needs to be updated.
     if (!iomux) {
         return CO_ERROR_INVAL;
     }
     for (int i = 0; i < iomux->associated_count; i++) {
         if (iomux->associated_sockets[i] == fd) {
-            // 用最后一个元素填补空缺（O(1) 删除）
+            // Fill the gap with the last element for O(1) removal
             iomux->associated_sockets[i] = iomux->associated_sockets[--iomux->associated_count];
             break;
         }
@@ -313,15 +313,15 @@ co_error_t co_iomux_poll(co_iomux_t *iomux, int timeout_ms, int *out_ready_count
     ULONG removed = 0;
     DWORD timeout = (timeout_ms < 0) ? INFINITE : (DWORD)timeout_ms;
 
-    // 批量取出完成包（Windows Vista+），与 epoll_wait 语义对齐：
-    // 一次调用可取出多个完成事件，避免高并发时每次只处理一个的瓶颈。
+    // Fetch completion packets in batches (Windows Vista+) to better match
+    // epoll_wait semantics and avoid handling only one completion per call.
     BOOL ret = GetQueuedCompletionStatusEx(
         iomux->iocp,
         iomux->entries,
         (ULONG)iomux->max_events,
         &removed,
         timeout,
-        FALSE   // fAlertable：不使用 APC
+        FALSE   // fAlertable: do not use APC delivery
     );
 
     if (!ret) {
@@ -341,7 +341,7 @@ co_error_t co_iomux_poll(co_iomux_t *iomux, int timeout_ms, int *out_ready_count
             continue;
         }
 
-        // 通过 OVERLAPPED 成员偏移还原 wait_ctx 指针
+        // Recover the wait_ctx pointer from the OVERLAPPED member offset
         co_io_wait_ctx_t *wait_ctx =
             (co_io_wait_ctx_t *)((char *)overlapped - offsetof(co_io_wait_ctx_t, overlapped));
 
@@ -351,7 +351,7 @@ co_error_t co_iomux_poll(co_iomux_t *iomux, int timeout_ms, int *out_ready_count
 
         wait_ctx->bytes_transferred = iomux->entries[i].dwNumberOfBytesTransferred;
 
-        // 设置事件类型
+        // Set the resulting event type
         wait_ctx->revents = 0;
         if (wait_ctx->op_type == CO_IO_OP_READ) {
             wait_ctx->revents = CO_IO_READ;
@@ -363,12 +363,12 @@ co_error_t co_iomux_poll(co_iomux_t *iomux, int timeout_ms, int *out_ready_count
             wait_ctx->revents = CO_IO_WRITE;
         }
 
-        // Internal 字段存储 NTSTATUS，非 0 表示 I/O 操作失败
+        // The Internal field stores NTSTATUS; non-zero indicates I/O failure
         if (iomux->entries[i].Internal != 0) {
             wait_ctx->revents |= CO_IO_ERROR;
         }
 
-        // 唤醒协程
+        // Wake the coroutine
         co_routine_t *routine = wait_ctx->routine;
         if (routine->state == CO_STATE_WAITING) {
             routine->state = CO_STATE_READY;
@@ -387,12 +387,12 @@ co_error_t co_iomux_poll(co_iomux_t *iomux, int timeout_ms, int *out_ready_count
 }
 
 // ============================================================================
-// 辅助函数
+// Helper functions
 // ============================================================================
 
 co_error_t co_set_nonblocking(co_socket_t fd) {
-    // Windows 套接字设置非阻塞
-    u_long mode = 1;  // 1 = 非阻塞
+    // Set a Windows socket to non-blocking mode
+    u_long mode = 1;  // 1 = non-blocking
     if (ioctlsocket(fd, FIONBIO, &mode) != 0) {
         fprintf(stderr, "ioctlsocket FIONBIO failed: %d\n", WSAGetLastError());
         return CO_ERROR_PLATFORM;
@@ -401,7 +401,7 @@ co_error_t co_set_nonblocking(co_socket_t fd) {
 }
 
 co_error_t co_set_blocking(co_socket_t fd) {
-    u_long mode = 0;  // 0 = 阻塞
+    u_long mode = 0;  // 0 = blocking
     if (ioctlsocket(fd, FIONBIO, &mode) != 0) {
         fprintf(stderr, "ioctlsocket FIONBIO failed: %d\n", WSAGetLastError());
         return CO_ERROR_PLATFORM;
@@ -410,17 +410,17 @@ co_error_t co_set_blocking(co_socket_t fd) {
 }
 
 // ============================================================================
-// 协程式 I/O API 实现
+// Coroutine-friendly I/O API implementation
 // ============================================================================
 
 /**
- * @brief 等待 I/O 完成（内部辅助函数）
+ * @brief Wait for I/O completion (internal helper)
  */
 static co_error_t co_wait_io_async(co_socket_t fd, co_io_op_t op_type, 
                                    void *buffer, size_t buffer_size,
                                    int64_t timeout_ms,
                                    size_t *out_bytes_transferred) {
-    // 获取当前协程和调度器
+    // Get the current coroutine and scheduler
     co_scheduler_t *sched = co_current_scheduler();
     co_routine_t *current = co_current_routine();
     
@@ -428,14 +428,15 @@ static co_error_t co_wait_io_async(co_socket_t fd, co_io_op_t op_type,
         return CO_ERROR_INVAL;
     }
     
-    // 初始化超时状态
+    // Initialize timeout state
     current->timed_out = false;
     current->io_waiting = false;
 
-    // 注册超时定时器（如果有超时限制）
-    // 调度器的 timer handler 在定时器触发时会设置：
+    // Register a timeout timer if a deadline was requested.
+    // When the timer fires, the scheduler's timer handler will set:
     //   timed_out = true, io_waiting = false, waiting_io_count--
-    // 并将协程加入 ready_queue，从第一次 co_context_swap 恢复。
+    // and enqueue the coroutine into ready_queue, resuming it from the
+    // first co_context_swap below.
     if (timeout_ms >= 0) {
         current->wakeup_time = co_get_monotonic_time_ms() + (uint64_t)timeout_ms;
         current->io_waiting = true;
@@ -445,7 +446,7 @@ static co_error_t co_wait_io_async(co_socket_t fd, co_io_op_t op_type,
         }
     }
 
-    // 创建等待上下文
+    // Create the wait context
     co_io_wait_ctx_t wait_ctx;
     memset(&wait_ctx, 0, sizeof(wait_ctx));
     wait_ctx.fd = fd;
@@ -455,19 +456,19 @@ static co_error_t co_wait_io_async(co_socket_t fd, co_io_op_t op_type,
     wait_ctx.timeout_ms = timeout_ms;
     wait_ctx.routine = current;
     
-    // 关联到 IOCP（如果尚未关联）
+    // Associate with the IOCP if needed
     if (co_iomux_add(sched->iomux, &wait_ctx) != CO_OK) {
-        current->io_waiting = false;  // timer 已入堆，清零让 timer handler 自动跳过
+        current->io_waiting = false;  // Timer is already in the heap; clearing the flag lets the timer handler skip this entry
         return CO_ERROR_PLATFORM;
     }
     
-    // 投递异步 I/O 操作
+    // Submit the asynchronous I/O operation
     DWORD bytes_transferred = 0;
     DWORD flags = 0;
     BOOL success = FALSE;
     
     if (op_type == CO_IO_OP_READ) {
-        // 异步读取
+        // Asynchronous read
         WSABUF wsa_buf;
         wsa_buf.buf = (char *)buffer;
         wsa_buf.len = (ULONG)buffer_size;
@@ -476,19 +477,19 @@ static co_error_t co_wait_io_async(co_socket_t fd, co_io_op_t op_type,
                          &wait_ctx.overlapped, NULL);
         
         if (ret == 0) {
-            // 立即完成（很少见）
+            // Completed immediately, which is uncommon
             success = TRUE;
         } else if (WSAGetLastError() == WSA_IO_PENDING) {
-            // 异步操作已投递
+            // Async operation successfully queued
             success = TRUE;
         } else {
-            // 错误
+            // Error
             fprintf(stderr, "WSARecv failed: %d\n", WSAGetLastError());
             return CO_ERROR_PLATFORM;
         }
         
     } else if (op_type == CO_IO_OP_WRITE) {
-        // 异步写入
+        // Asynchronous write
         WSABUF wsa_buf;
         wsa_buf.buf = (char *)buffer;
         wsa_buf.len = (ULONG)buffer_size;
@@ -510,43 +511,48 @@ static co_error_t co_wait_io_async(co_socket_t fd, co_io_op_t op_type,
         return CO_ERROR_PLATFORM;
     }
     
-    // 标记协程为等待状态（不加入就绪队列）
+    // Mark the coroutine as waiting without requeueing it
     current->state = CO_STATE_WAITING;
     sched->waiting_io_count++;
     
-    // 第一次 swap：直接切换回调度器，等待 IOCP 完成事件或超时触发
-    // 注意：不能用 co_yield()，因为它会将协程重新加入就绪队列
+    // First swap: yield to the scheduler and wait for an IOCP completion or a timeout.
+    // co_yield() cannot be used because it would requeue the coroutine immediately.
     co_context_swap(&current->context, &sched->main_ctx);
     
     // -----------------------------------------------------------------------
-    // 超时路径
+    // Timeout path
     // -----------------------------------------------------------------------
-    // 调度器的 timer handler 触发时：
-    //   设置 timed_out=true、io_waiting=false，减少 waiting_io_count，
-    //   并将协程加入 ready_queue（状态变为 READY）。
-    // 此时 IOCP 操作仍挂起（WSARecv/WSASend 尚未完成），必须取消它，
-    // 然后做第二次 co_context_swap 等待取消完成包，以确保栈上的
-    // wait_ctx（内嵌 OVERLAPPED）在 IOCP 完成对它的最后一次访问之前
-    // 不会随栈帧销毁。
+    // When the scheduler's timer handler fires it sets timed_out=true,
+    // io_waiting=false, decrements waiting_io_count, and enqueues this
+    // coroutine into the ready_queue (state becomes READY).
+    // At that point the IOCP operation is still in flight (WSARecv/WSASend
+    // has not completed). We must cancel it and then perform a second
+    // co_context_swap to wait for the cancellation completion packet,
+    // guaranteeing that the stack-local wait_ctx (which contains the
+    // embedded OVERLAPPED) is not destroyed before IOCP is done with it.
     if (current->timed_out) {
-        // 请求取消：对 fd 上指定的 OVERLAPPED 操作发起取消。
-        // - 成功：IOCP 稍后投递 STATUS_CANCELLED (ERROR_OPERATION_ABORTED) 完成包。
-        // - ERROR_NOT_FOUND：操作已在内核侧完成，完成包尚在 IOCP 队列中未被
-        //   iomux_poll 处理（单线程模型保证了这一点）。IOCP 仍将投递该完成包。
-        // 无论哪种情况，都必须做第二次 swap 等待完成包。
+        // Request cancellation of the specific OVERLAPPED on fd.
+        // - Success: IOCP will deliver a STATUS_CANCELLED (ERROR_OPERATION_ABORTED)
+        //   completion packet shortly.
+        // - ERROR_NOT_FOUND: the operation already completed on the kernel side;
+        //   its completion packet is still in the IOCP queue, not yet consumed
+        //   by iomux_poll (the single-threaded model guarantees this). IOCP will
+        //   still deliver the packet.
+        // Either way, a second swap is required to drain the completion packet.
         CancelIoEx((HANDLE)fd, &wait_ctx.overlapped);
 
         current->state = CO_STATE_WAITING;
         sched->waiting_io_count++;
         co_context_swap(&current->context, &sched->main_ctx);
 
-        // 第二次恢复：IOCP 已投递完成包（STATUS_CANCELLED 或竞态正常完成），
-        // wait_ctx 已安全，栈帧可以释放。
+        // Second resume: IOCP has delivered the completion packet
+        // (STATUS_CANCELLED or a race-won normal completion). wait_ctx is
+        // now safe and the stack frame can be released.
         return CO_ERROR_TIMEOUT;
     }
 
     // -----------------------------------------------------------------------
-    // 正常完成路径
+    // Normal completion path
     // -----------------------------------------------------------------------
     if (wait_ctx.revents & CO_IO_ERROR) {
         return CO_ERROR;
@@ -605,12 +611,12 @@ co_socket_t co_accept(co_socket_t sockfd, void *addr, socklen_t *addrlen, int64_
         return CO_INVALID_SOCKET;
     }
     
-    // 确保扩展函数已加载
+    // Ensure extension functions are loaded
     if (!load_extension_functions()) {
         return CO_INVALID_SOCKET;
     }
     
-    // 获取当前协程和调度器
+    // Get the current coroutine and scheduler
     co_scheduler_t *sched = co_current_scheduler();
     co_routine_t *current = co_current_routine();
     
@@ -619,13 +625,13 @@ co_socket_t co_accept(co_socket_t sockfd, void *addr, socklen_t *addrlen, int64_
         return CO_INVALID_SOCKET;
     }
     
-    // 预先创建客户端套接字（AcceptEx 要求）
+    // Create the client socket up front as required by AcceptEx
     co_socket_t client_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (client_fd == CO_INVALID_SOCKET) {
         return CO_INVALID_SOCKET;
     }
     
-    // 堆分配等待上下文（必须在整个异步操作期间存活）
+    // Heap-allocate the wait context so it survives the full async operation
     co_io_wait_ctx_t *wait_ctx = (co_io_wait_ctx_t *)calloc(1, sizeof(co_io_wait_ctx_t));
     if (!wait_ctx) {
         closesocket(client_fd);
@@ -638,8 +644,7 @@ co_socket_t co_accept(co_socket_t sockfd, void *addr, socklen_t *addrlen, int64_
     wait_ctx->routine = current;
     wait_ctx->accept_socket = client_fd;
     
-    // 尝试关联监听套接字到 IOCP（如果尚未关联）
-    // 如果已经关联过，co_iomux_add 会跳过
+    // Try associating the listening socket with IOCP if it is not already associated
     if (co_iomux_add(sched->iomux, wait_ctx) != CO_OK) {
         fprintf(stderr, "Failed to associate listen socket\n");
         closesocket(client_fd);
@@ -647,7 +652,7 @@ co_socket_t co_accept(co_socket_t sockfd, void *addr, socklen_t *addrlen, int64_
         return CO_INVALID_SOCKET;
     }
     
-    // 投递 AcceptEx 操作
+    // Submit the AcceptEx operation
     DWORD bytes_received = 0;
     DWORD addr_len = sizeof(struct sockaddr_in) + 16;
     
@@ -672,15 +677,15 @@ co_socket_t co_accept(co_socket_t sockfd, void *addr, socklen_t *addrlen, int64_
         }
     }
     
-    // 标记协程为等待状态（不加入就绪队列）
+    // Mark the coroutine as waiting without requeueing it
     current->state = CO_STATE_WAITING;
     sched->waiting_io_count++;
     
-    // 直接切换回调度器，等待 IOCP 完成事件唤醒
-    // 注意：不能用 co_yield()，因为它会将协程重新加入就绪队列
+    // Switch directly back to the scheduler and wait for IOCP completion.
+    // co_yield() cannot be used because it would requeue the coroutine.
     co_context_swap(&current->context, &sched->main_ctx);
     
-    // 恢复执行时，AcceptEx 已完成
+    // Once resumed, AcceptEx has completed
     if (wait_ctx->revents & CO_IO_ERROR) {
         fprintf(stderr, "AcceptEx completed with error\n");
         closesocket(client_fd);
@@ -688,7 +693,7 @@ co_socket_t co_accept(co_socket_t sockfd, void *addr, socklen_t *addrlen, int64_
         return CO_INVALID_SOCKET;
     }
     
-    // AcceptEx 成功，更新客户端套接字上下文
+    // AcceptEx succeeded, update the accepted socket context
     if (setsockopt(client_fd, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
                    (char *)&sockfd, sizeof(sockfd)) != 0) {
         fprintf(stderr, "setsockopt SO_UPDATE_ACCEPT_CONTEXT failed: %d\n", WSAGetLastError());
@@ -697,7 +702,7 @@ co_socket_t co_accept(co_socket_t sockfd, void *addr, socklen_t *addrlen, int64_
         return CO_INVALID_SOCKET;
     }
     
-    // 提取客户端地址（如果需要）
+    // Extract the client address if requested
     if (addr && addrlen) {
         struct sockaddr *local_addr = NULL;
         struct sockaddr *remote_addr = NULL;
@@ -722,7 +727,7 @@ co_socket_t co_accept(co_socket_t sockfd, void *addr, socklen_t *addrlen, int64_
         }
     }
     
-    // 释放等待上下文
+    // Release the wait context
     free(wait_ctx);
     
     return client_fd;
@@ -734,12 +739,12 @@ int co_connect(co_socket_t sockfd, const void *addr, socklen_t addrlen, int64_t 
         return -1;
     }
     
-    // 确保扩展函数已加载
+    // Ensure extension functions are loaded
     if (!load_extension_functions()) {
         return -1;
     }
     
-    // 获取当前协程和调度器
+    // Get the current coroutine and scheduler
     co_scheduler_t *sched = co_current_scheduler();
     co_routine_t *current = co_current_routine();
     
@@ -748,13 +753,13 @@ int co_connect(co_socket_t sockfd, const void *addr, socklen_t addrlen, int64_t 
         return -1;
     }
     
-    // 堆分配等待上下文
+    // Heap-allocate the wait context
     co_io_wait_ctx_t *wait_ctx = (co_io_wait_ctx_t *)calloc(1, sizeof(co_io_wait_ctx_t));
     if (!wait_ctx) {
         return -1;
     }
     
-    // ConnectEx 要求套接字必须先 bind 到本地地址
+    // ConnectEx requires the socket to be bound to a local address first
     struct sockaddr_in local_addr;
     memset(&local_addr, 0, sizeof(local_addr));
     local_addr.sin_family = AF_INET;
@@ -775,10 +780,10 @@ int co_connect(co_socket_t sockfd, const void *addr, socklen_t addrlen, int64_t 
     wait_ctx->timeout_ms = timeout_ms;
     wait_ctx->routine = current;
     
-    // 关联套接字到 IOCP
+    // Associate the socket with the IOCP
     co_iomux_add(sched->iomux, wait_ctx);
     
-    // 投递 ConnectEx 操作
+    // Submit the ConnectEx operation
     DWORD bytes_sent = 0;
     
     BOOL ret = g_ConnectEx(
@@ -800,21 +805,21 @@ int co_connect(co_socket_t sockfd, const void *addr, socklen_t addrlen, int64_t 
         }
     }
     
-    // 标记协程为等待状态（不加入就绪队列）
+    // Mark the coroutine as waiting without requeueing it
     current->state = CO_STATE_WAITING;
     sched->waiting_io_count++;
     
-    // 直接切换回调度器，等待 IOCP 完成事件唤醒
-    // 注意：不能用 co_yield()，因为它会将协程重新加入就绪队列
+    // Switch directly back to the scheduler and wait for IOCP completion.
+    // co_yield() cannot be used because it would requeue the coroutine.
     co_context_swap(&current->context, &sched->main_ctx);
     
-    // 恢复执行时，ConnectEx 已完成
+    // Once resumed, ConnectEx has completed
     if (wait_ctx->revents & CO_IO_ERROR) {
         free(wait_ctx);
         return -1;
     }
     
-    // ConnectEx 成功，更新套接字上下文
+    // ConnectEx succeeded, update the socket context
     if (setsockopt(sockfd, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT,
                    NULL, 0) != 0) {
         fprintf(stderr, "setsockopt SO_UPDATE_CONNECT_CONTEXT failed: %d\n", WSAGetLastError());
@@ -822,7 +827,7 @@ int co_connect(co_socket_t sockfd, const void *addr, socklen_t addrlen, int64_t 
         return -1;
     }
     
-    // 释放等待上下文
+    // Release the wait context
     free(wait_ctx);
     
     return 0;

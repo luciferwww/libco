@@ -1,9 +1,9 @@
 /**
  * @file test_example.c
- * @brief Unity测试框架示例 - C语言单元测试
+ * @brief Unity test framework example - C unit tests
  * 
- * 这是一个示例测试文件，用于验证Unity测试框架集成是否成功。
- * Phase 2 将添加实际的协程库测试。
+ * This example test file verifies that the Unity test framework integration is
+ * working correctly. Real coroutine library tests will be added in Phase 2.
  */
 
 #include "unity.h"
@@ -12,21 +12,21 @@
 #include <string.h>
 
 /**
- * @brief 每个测试用例执行前调用
+ * @brief Called before each test case
  */
 void setUp(void) {
-    // 测试前的初始化工作
+    // Per-test initialization work
 }
 
 /**
- * @brief 每个测试用例执行后调用
+ * @brief Called after each test case
  */
 void tearDown(void) {
-    // 测试后的清理工作
+    // Per-test cleanup work
 }
 
 /**
- * @brief 测试基本断言
+ * @brief Test basic assertions
  */
 void test_basic_assertions(void) {
     TEST_ASSERT_TRUE(1);
@@ -36,16 +36,16 @@ void test_basic_assertions(void) {
 }
 
 /**
- * @brief 测试字符串断言
+ * @brief Test string assertions
  */
 void test_string_assertions(void) {
     TEST_ASSERT_EQUAL_STRING("hello", "hello");
-    // Unity 没有 TEST_ASSERT_NOT_EQUAL_STRING，使用strcmp
+    // Unity has no TEST_ASSERT_NOT_EQUAL_STRING, so use strcmp instead
     TEST_ASSERT_TRUE(strcmp("hello", "world") != 0);
 }
 
 /**
- * @brief 测试浮点数断言
+ * @brief Test floating-point assertions
  */
 void test_float_assertions(void) {
     TEST_ASSERT_EQUAL_FLOAT(3.14f, 3.14f);
@@ -53,7 +53,7 @@ void test_float_assertions(void) {
 }
 
 /**
- * @brief 测试指针断言
+ * @brief Test pointer assertions
  */
 void test_pointer_assertions(void) {
     int value = 42;
@@ -64,20 +64,20 @@ void test_pointer_assertions(void) {
 }
 
 /**
- * @brief 测试配置文件
+ * @brief Test the generated configuration file
  * 
- * 验证 config.h 是否正确生成
+ * Verify that config.h was generated correctly.
  */
 void test_config_values(void) {
-    // 检查版本号
+    // Check the version numbers
     TEST_ASSERT_EQUAL_INT(2, LIBCO_VERSION_MAJOR);
     TEST_ASSERT_EQUAL_INT(0, LIBCO_VERSION_MINOR);
     TEST_ASSERT_EQUAL_INT(0, LIBCO_VERSION_PATCH);
     
-    // 检查版本字符串
+    // Check the version string
     TEST_ASSERT_EQUAL_STRING("2.0.0", LIBCO_VERSION_STRING);
     
-    // 检查平台宏（至少有一个应该被定义）
+    // Check platform macros; at least one should be defined
     #if defined(LIBCO_PLATFORM_LINUX)
     printf("Platform: Linux\n");
     TEST_ASSERT_TRUE(1);
@@ -93,18 +93,18 @@ void test_config_values(void) {
 }
 
 /**
- * @brief 主函数 - 运行所有测试
+ * @brief Main function that runs all tests
  */
 int main(void) {
     UNITY_BEGIN();
     
-    // 基础断言测试
+    // Basic assertion tests
     RUN_TEST(test_basic_assertions);
     RUN_TEST(test_string_assertions);
     RUN_TEST(test_float_assertions);
     RUN_TEST(test_pointer_assertions);
     
-    // 配置文件测试
+    // Configuration tests
     RUN_TEST(test_config_values);
     
     return UNITY_END();

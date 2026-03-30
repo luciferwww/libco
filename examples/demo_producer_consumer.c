@@ -1,11 +1,11 @@
 /**
  * @file demo_producer_consumer.c
- * @brief 生产者-消费者示例
+ * @brief Producer-consumer demo
  * 
- * 演示多个协程协作：
- * - 生产者协程定期生产数据
- * - 消费者协程等待并消费数据
- * - 使用 co_sleep() 模拟工作延迟
+ * Demonstrates cooperation between multiple coroutines:
+ * - producer coroutines periodically generate data
+ * - consumer coroutines wait for and consume data
+ * - co_sleep() simulates work latency
  */
 
 #include <libco/co.h>
@@ -14,7 +14,7 @@
 #include <time.h>
 
 // ============================================================================
-// 共享队列（简单的环形缓冲区）
+// Shared queue implemented as a simple ring buffer
 // ============================================================================
 
 #define QUEUE_SIZE 10
@@ -28,10 +28,10 @@ typedef struct {
 
 static Queue g_queue = {0};
 
-// 入队
+// Enqueue
 static bool queue_push(int value) {
     if (g_queue.count >= QUEUE_SIZE) {
-        return false;  // 队列满
+        return false;  // Queue is full
     }
     
     g_queue.buffer[g_queue.tail] = value;
@@ -40,10 +40,10 @@ static bool queue_push(int value) {
     return true;
 }
 
-// 出队
+// Dequeue
 static bool queue_pop(int *value) {
     if (g_queue.count == 0) {
-        return false;  // 队列空
+        return false;  // Queue is empty
     }
     
     *value = g_queue.buffer[g_queue.head];
@@ -53,7 +53,7 @@ static bool queue_pop(int *value) {
 }
 
 // ============================================================================
-// 生产者协程
+// Producer coroutine
 // ============================================================================
 
 typedef struct {
@@ -68,16 +68,16 @@ static void producer_routine(void *arg) {
     printf("[Producer %d] Started\n", args->id);
     
     for (int i = 0; i < args->produce_count; i++) {
-        // 尝试生产
+        // Try to produce an item
         while (!queue_push(args->id * 100 + i)) {
             printf("[Producer %d] Queue full, waiting...\n", args->id);
-            co_sleep(10);  // 队列满，短暂等待
+            co_sleep(10);  // Queue is full, wait briefly
         }
         
         printf("[Producer %d] Produced: %d (queue: %d/%d)\n", 
                args->id, args->id * 100 + i, g_queue.count, QUEUE_SIZE);
         
-        // 模拟生产延迟
+        // Simulate production latency
         co_sleep(args->interval_ms);
     }
     
@@ -85,7 +85,7 @@ static void producer_routine(void *arg) {
 }
 
 // ============================================================================
-// 消费者协程
+// Consumer coroutine
 // ============================================================================
 
 typedef struct {
@@ -102,16 +102,16 @@ static void consumer_routine(void *arg) {
     for (int i = 0; i < args->consume_count; i++) {
         int value;
         
-        // 尝试消费
+        // Try to consume an item
         while (!queue_pop(&value)) {
             printf("[Consumer %d] Queue empty, waiting...\n", args->id);
-            co_sleep(10);  // 队列空，短暂等待
+            co_sleep(10);  // Queue is empty, wait briefly
         }
         
         printf("[Consumer %d] Consumed: %d (queue: %d/%d)\n",
                args->id, value, g_queue.count, QUEUE_SIZE);
         
-        // 模拟消费延迟
+        // Simulate consumption latency
         co_sleep(args->interval_ms);
     }
     
@@ -119,38 +119,38 @@ static void consumer_routine(void *arg) {
 }
 
 // ============================================================================
-// 主函数
+// Main function
 // ============================================================================
 
 int main(void) {
     printf("=== Producer-Consumer Demo ===\n\n");
     
-    // 创建调度器
+    // Create the scheduler
     co_scheduler_t *sched = co_scheduler_create(NULL);
     if (!sched) {
         fprintf(stderr, "Failed to create scheduler\n");
         return 1;
     }
     
-    // 创建生产者参数
+    // Set up producer parameters
     ProducerArgs producer1 = { .id = 1, .produce_count = 5, .interval_ms = 30 };
     ProducerArgs producer2 = { .id = 2, .produce_count = 3, .interval_ms = 50 };
     
-    // 创建消费者参数
+    // Set up consumer parameters
     ConsumerArgs consumer1 = { .id = 1, .consume_count = 4, .interval_ms = 40 };
     ConsumerArgs consumer2 = { .id = 2, .consume_count = 4, .interval_ms = 60 };
     
-    // 创建生产者协程
+    // Create producer coroutines
     co_spawn(sched, producer_routine, &producer1, 0);
     co_spawn(sched, producer_routine, &producer2, 0);
     
-    // 创建消费者协程
+    // Create consumer coroutines
     co_spawn(sched, consumer_routine, &consumer1, 0);
     co_spawn(sched, consumer_routine, &consumer2, 0);
     
     printf("Starting scheduler...\n\n");
     
-    // 运行调度器
+    // Run the scheduler
     clock_t start = clock();
     co_error_t err = co_scheduler_run(sched);
     clock_t end = clock();
@@ -162,7 +162,7 @@ int main(void) {
     printf("Elapsed time: %.2f seconds\n", elapsed);
     printf("Final queue count: %d\n", g_queue.count);
     
-    // 清理
+    // Cleanup
     co_scheduler_destroy(sched);
     
     return err == CO_OK ? 0 : 1;

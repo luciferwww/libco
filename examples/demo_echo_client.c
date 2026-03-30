@@ -1,8 +1,8 @@
 /**
  * @file demo_echo_client.c
- * @brief TCP Echo Client 测试程序（Week 8）
+ * @brief TCP echo client test program (Week 8)
  * 
- * 用于测试 echo server 的简单客户端
+ * A simple client used to test the echo server.
  */
 
 #ifdef _WIN32
@@ -42,7 +42,7 @@ static void cleanup_winsock(void) {}
 #endif
 
 // ============================================================================
-// 客户端协程
+// Client coroutine
 // ============================================================================
 
 typedef struct {
@@ -56,20 +56,20 @@ static void client_routine(void *arg) {
     
     printf("[Client %d] Connecting to %s:%d...\n", args->client_id, args->host, args->port);
     
-    // 创建套接字
+    // Create the socket
     co_socket_t sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == CO_INVALID_SOCKET) {
         fprintf(stderr, "[Client %d] Failed to create socket\n", args->client_id);
         return;
     }
     
-    // 设置服务器地址
+    // Fill in the server address
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(args->port);
     
-    // 转换 IP 地址
+    // Convert the IP address
 #ifdef _WIN32
     server_addr.sin_addr.s_addr = inet_addr(args->host);
 #else
@@ -80,7 +80,7 @@ static void client_routine(void *arg) {
     }
 #endif
     
-    // 连接服务器（协程式）
+    // Connect to the server using coroutine-friendly I/O
     if (co_connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr), 5000) != 0) {
 #ifdef _WIN32
         fprintf(stderr, "[Client %d] Connect failed: %d\n", args->client_id, WSAGetLastError());
@@ -93,7 +93,7 @@ static void client_routine(void *arg) {
     
     printf("[Client %d] Connected!\n", args->client_id);
     
-    // 发送测试消息
+    // Send a test message
     char send_buf[128];
     snprintf(send_buf, sizeof(send_buf), "Hello from client %d!\n", args->client_id);
     
@@ -106,7 +106,7 @@ static void client_routine(void *arg) {
     
     printf("[Client %d] Sent: %s", args->client_id, send_buf);
     
-    // 接收回显
+    // Receive the echo reply
     char recv_buf[128];
     ssize_t received = co_read(sockfd, recv_buf, sizeof(recv_buf) - 1, 5000);
     if (received <= 0) {
@@ -118,20 +118,20 @@ static void client_routine(void *arg) {
     recv_buf[received] = '\0';
     printf("[Client %d] Received: %s", args->client_id, recv_buf);
     
-    // 验证回显是否正确
+    // Verify that the echoed message matches
     if (strcmp(send_buf, recv_buf) == 0) {
-        printf("[Client %d] ✓ Echo correct!\n", args->client_id);
+        printf("[Client %d] [OK] Echo correct!\n", args->client_id);
     } else {
-        printf("[Client %d] ✗ Echo mismatch!\n", args->client_id);
+        printf("[Client %d] [FAIL] Echo mismatch!\n", args->client_id);
     }
     
-    // 关闭连接
+    // Close the connection
     closesocket(sockfd);
     printf("[Client %d] Disconnected\n", args->client_id);
 }
 
 // ============================================================================
-// 主函数
+// Main function
 // ============================================================================
 
 int main(int argc, char *argv[]) {
@@ -139,7 +139,7 @@ int main(int argc, char *argv[]) {
     uint16_t port = 8080;
     int num_clients = 1;
     
-    // 解析命令行参数
+    // Parse command-line arguments
     if (argc > 1) {
         host = argv[1];
     }
@@ -154,7 +154,7 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    // 初始化网络库
+    // Initialize the networking library
     if (init_winsock() != 0) {
         fprintf(stderr, "Failed to initialize Winsock\n");
         return 1;
@@ -164,7 +164,7 @@ int main(int argc, char *argv[]) {
     printf("Target: %s:%d\n", host, port);
     printf("Clients: %d\n\n", num_clients);
     
-    // 创建调度器
+    // Create the scheduler
     co_scheduler_t *sched = co_scheduler_create(NULL);
     if (!sched) {
         fprintf(stderr, "Failed to create scheduler\n");
@@ -172,7 +172,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    // 创建客户端协程
+    // Create client coroutines
     ClientArgs *args_array = (ClientArgs *)malloc(sizeof(ClientArgs) * num_clients);
     for (int i = 0; i < num_clients; i++) {
         args_array[i].host = host;
@@ -185,10 +185,10 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    // 运行调度器
+    // Run the scheduler
     co_scheduler_run(sched);
     
-    // 清理
+    // Cleanup
     free(args_array);
     co_scheduler_destroy(sched);
     cleanup_winsock();

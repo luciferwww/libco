@@ -1,9 +1,9 @@
 /**
  * @file test_example.cpp
- * @brief Google Test框架示例 - C++单元测试
+ * @brief Google Test framework example - C++ unit tests
  * 
- * 这是一个示例测试文件，用于验证Google Test框架集成是否成功。
- * Phase 2 将添加实际的C++包装器测试。
+ * This example test file verifies that the Google Test integration is working
+ * correctly. Real C++ wrapper tests will be added in Phase 2.
  */
 
 #include <gtest/gtest.h>
@@ -13,7 +13,7 @@
 #include <memory>
 
 /**
- * @brief 基础测试用例
+ * @brief Basic test case
  */
 TEST(BasicTest, Assertions) {
     EXPECT_TRUE(true);
@@ -27,7 +27,7 @@ TEST(BasicTest, Assertions) {
 }
 
 /**
- * @brief 字符串测试
+ * @brief String tests
  */
 TEST(BasicTest, Strings) {
     std::string hello = "hello";
@@ -37,7 +37,7 @@ TEST(BasicTest, Strings) {
 }
 
 /**
- * @brief 浮点数测试
+ * @brief Floating-point tests
  */
 TEST(BasicTest, FloatingPoint) {
     EXPECT_FLOAT_EQ(3.14f, 3.14f);
@@ -46,7 +46,7 @@ TEST(BasicTest, FloatingPoint) {
 }
 
 /**
- * @brief 异常测试
+ * @brief Exception tests
  */
 TEST(BasicTest, Exceptions) {
     EXPECT_THROW({
@@ -60,7 +60,7 @@ TEST(BasicTest, Exceptions) {
 }
 
 /**
- * @brief 配置文件测试
+ * @brief Configuration file tests
  */
 TEST(ConfigTest, VersionCheck) {
     EXPECT_EQ(2, LIBCO_VERSION_MAJOR);
@@ -70,7 +70,7 @@ TEST(ConfigTest, VersionCheck) {
 }
 
 /**
- * @brief 平台检测测试
+ * @brief Platform detection tests
  */
 TEST(ConfigTest, PlatformCheck) {
     #if defined(LIBCO_PLATFORM_LINUX)
@@ -88,21 +88,21 @@ TEST(ConfigTest, PlatformCheck) {
 }
 
 /**
- * @brief Fixture 示例 - 测试夹具
+ * @brief Fixture example
  * 
- * Fixture 提供了 SetUp/TearDown 机制，用于测试前后的准备和清理工作
+ * A fixture provides SetUp and TearDown hooks for per-test preparation and cleanup.
  */
 class VectorTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // 每个测试前执行
+        // Run before each test
         vec.push_back(1);
         vec.push_back(2);
         vec.push_back(3);
     }
 
     void TearDown() override {
-        // 每个测试后执行
+        // Run after each test
         vec.clear();
     }
 
@@ -126,7 +126,7 @@ TEST_F(VectorTest, PushBack) {
 }
 
 /**
- * @brief 参数化测试示例
+ * @brief Parameterized test example
  */
 class SquareTest : public ::testing::TestWithParam<int> {
 };
@@ -143,14 +143,14 @@ INSTANTIATE_TEST_SUITE_P(
 );
 
 /**
- * @brief 智能指针测试 - C++ 特性
+ * @brief Smart pointer tests for C++ features
  */
 TEST(CppFeaturesTest, UniquePtr) {
     auto ptr = std::make_unique<int>(42);
     EXPECT_NE(nullptr, ptr);
     EXPECT_EQ(42, *ptr);
     
-    // unique_ptr 会自动释放内存
+    // unique_ptr releases memory automatically
 }
 
 TEST(CppFeaturesTest, SharedPtr) {
@@ -163,7 +163,7 @@ TEST(CppFeaturesTest, SharedPtr) {
 }
 
 /**
- * @brief Lambda 测试 - C++11 特性
+ * @brief Lambda tests for C++11 features
  */
 TEST(CppFeaturesTest, Lambda) {
     auto add = [](int a, int b) { return a + b; };
@@ -174,4 +174,4 @@ TEST(CppFeaturesTest, Lambda) {
     EXPECT_EQ(20, capture());
 }
 
-// main() 函数由 gtest_main 提供，不需要手动编写
+// main() is provided by gtest_main and does not need to be written manually

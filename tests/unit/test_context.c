@@ -1,8 +1,8 @@
 /**
  * @file test_context.c
- * @brief 上下文切换单元测试
+ * @brief Context switching unit tests
  * 
- * 测试跨平台的上下文切换功能。
+ * Tests cross-platform context switching behavior.
  */
 
 #include "unity.h"
@@ -12,18 +12,18 @@
 #include <string.h>
 
 // ============================================================================
-// 测试辅助
+// Test helpers
 // ============================================================================
 
-// 默认栈大小
+// Default stack size
 #define TEST_STACK_SIZE (64 * 1024)  // 64KB
 
-// 全局变量用于测试
+// Global state used by the tests
 static int g_test_counter = 0;
 static int g_test_value = 0;
 
 /**
- * @brief 测试协程入口函数 - 简单计数
+ * @brief Test coroutine entry function for simple counting
  */
 static void test_coroutine_simple(void *arg) {
     int *counter = (int *)arg;
@@ -32,20 +32,20 @@ static void test_coroutine_simple(void *arg) {
 }
 
 /**
- * @brief 测试协程入口函数 - 多次让出
+ * @brief Test coroutine entry function with multiple yield points
  */
 static void test_coroutine_yield(void *arg) {
     int *value = (int *)arg;
     for (int i = 0; i < 3; i++) {
         (*value) += 10;
         printf("Coroutine: value = %d\n", *value);
-        // 注意：这里无法直接调用 co_yield，因为还没有实现调度器
-        // 这个测试只验证上下文切换本身
+        // Note: co_yield cannot be called directly here because the scheduler
+        // has not been implemented yet. This test only validates context switching.
     }
 }
 
 // ============================================================================
-// 测试用例
+    // Test cases
 // ============================================================================
 
 void setUp(void) {
@@ -54,11 +54,11 @@ void setUp(void) {
 }
 
 void tearDown(void) {
-    // 清理工作
+    // Cleanup work
 }
 
 /**
- * @brief 测试上下文初始化
+ * @brief Test context initialization
  */
 void test_context_init_success(void) {
     co_context_t ctx;
@@ -77,30 +77,30 @@ void test_context_init_success(void) {
 }
 
 /**
- * @brief 测试无效参数
+ * @brief Test invalid parameters
  */
 void test_context_init_invalid_params(void) {
     co_context_t ctx;
     void *stack = malloc(TEST_STACK_SIZE);
     
-    // NULL 上下文
+    // NULL context
     TEST_ASSERT_EQUAL_INT(CO_ERROR_INVAL,
                          co_context_init(NULL, stack, TEST_STACK_SIZE,
                                         test_coroutine_simple, NULL));
     
-    // NULL 入口函数
+    // NULL entry function
     TEST_ASSERT_EQUAL_INT(CO_ERROR_INVAL,
                          co_context_init(&ctx, stack, TEST_STACK_SIZE,
                                         NULL, NULL));
     
-    // NULL 栈（仅在非 Windows 平台测试）
+    // NULL stack, tested only on non-Windows platforms
     #if !defined(_WIN32)
     TEST_ASSERT_EQUAL_INT(CO_ERROR_INVAL,
                          co_context_init(&ctx, NULL, TEST_STACK_SIZE,
                                         test_coroutine_simple, NULL));
     #endif
     
-    // 0 栈大小（仅在非 Windows 平台测试）
+    // Zero stack size, tested only on non-Windows platforms
     #if !defined(_WIN32)
     TEST_ASSERT_EQUAL_INT(CO_ERROR_INVAL,
                          co_context_init(&ctx, stack, 0,
@@ -111,65 +111,65 @@ void test_context_init_invalid_params(void) {
 }
 
 /**
- * @brief 测试基本的上下文切换
+ * @brief Test basic context switching
  * 
- * 注意：这个测试比较复杂，因为需要创建主上下文和协程上下文
+ * Note: this test is more complex because it needs both a main context and a coroutine context.
  * 
- * TODO(Week 4): 当前此测试被跳过，因为协程不会自动返回（需要调度器）
+ * TODO(Week 4): this test is currently skipped because coroutines do not yet
+ * return automatically; scheduler support is required.
  */
 void test_context_swap_basic(void) {
-    // Week 3 暂时跳过此测试：协程执行后不会返回，导致测试卡住
-    // Week 4 实现调度器后，协程可以正确返回，届时启用此测试
+    // Skip this test for Week 3: the coroutine does not return after execution,
+    // which would cause the test to hang. Re-enable it once the scheduler exists.
     TEST_IGNORE_MESSAGE("Requires scheduler (Week 4) to handle coroutine return");
     
-#if 0  // 暂时禁用，Week 4 启用
-    // 分配栈
+#if 0  // Temporarily disabled; enable in Week 4
+    // Allocate the stack
     void *stack = malloc(TEST_STACK_SIZE);
     TEST_ASSERT_NOT_NULL(stack);
     
-    // 创建主上下文和协程上下文
+    // Create the main context and the coroutine context
     co_context_t main_ctx;
     co_context_t co_ctx;
     
-    // 初始化协程上下文
+    // Initialize the coroutine context
     co_error_t result = co_context_init(&co_ctx, stack, TEST_STACK_SIZE,
                                         test_coroutine_simple, &g_test_counter);
     TEST_ASSERT_EQUAL_INT(CO_OK, result);
     
-    // 在 Windows 上，需要先将主线程转换为 Fiber（在上下文切换代码中自动完成）
-    // 在 Unix 上，需要保存当前上下文
+    // On Windows the main thread must first be converted to a Fiber, which is
+    // handled automatically in the context switching code. On Unix, capture the current context.
     #if defined(LIBCO_PLATFORM_LINUX) || defined(LIBCO_PLATFORM_MACOS)
     result = co_context_get_current(&main_ctx);
     TEST_ASSERT_EQUAL_INT(CO_OK, result);
     #else
-    // Windows 平台：初始化一个空的主上下文
+    // Windows: initialize an empty main context
     memset(&main_ctx, 0, sizeof(main_ctx));
     #endif
     
-    // 验证计数器初始值
+    // Verify the initial counter value
     TEST_ASSERT_EQUAL_INT(0, g_test_counter);
     
-    // 切换到协程
+    // Switch to the coroutine
     printf("Switching to coroutine...\n");
     result = co_context_swap(&main_ctx, &co_ctx);
     
-    // 注意：在当前简单实现中，协程执行完后不会切换回来
-    // 所以这行代码可能不会执行
-    // 完整的调度器实现会处理协程返回
+    // In the current simplified implementation the coroutine does not switch back
+    // after completion, so this line may never run. A full scheduler handles the return path.
     printf("Returned from coroutine (if this prints, coroutine returned)\n");
     
-    // 清理
+    // Cleanup
     co_context_destroy(&co_ctx);
     free(stack);
     
-    // 注意：由于协程可能不会返回，这个断言可能不会执行
-    // 这是一个已知的限制，完整的调度器会解决这个问题
+    // Because the coroutine may not return, this assertion may never execute.
+    // That is a known limitation which the full scheduler will resolve.
     // TEST_ASSERT_EQUAL_INT(1, g_test_counter);
 #endif
 }
 
 /**
- * @brief 测试上下文销毁
+ * @brief Test context destruction
  */
 void test_context_destroy(void) {
     co_context_t ctx;
@@ -178,10 +178,10 @@ void test_context_destroy(void) {
     co_context_init(&ctx, stack, TEST_STACK_SIZE,
                    test_coroutine_simple, NULL);
     
-    // 销毁上下文
+    // Destroy the context
     co_context_destroy(&ctx);
     
-    // 验证清理
+    // Verify cleanup
     #if !defined(_WIN32)
     TEST_ASSERT_EQUAL_PTR(NULL, ctx.stack_base);
     TEST_ASSERT_EQUAL_size_t(0, ctx.stack_size);
@@ -191,28 +191,28 @@ void test_context_destroy(void) {
 }
 
 /**
- * @brief 测试NULL上下文销毁（不应崩溃）
+ * @brief Test destroying a NULL context without crashing
  */
 void test_context_destroy_null(void) {
-    co_context_destroy(NULL);  // 应该安全返回
-    TEST_ASSERT_TRUE(true);    // 如果到达这里，说明没有崩溃
+    co_context_destroy(NULL);  // Should return safely
+    TEST_ASSERT_TRUE(true);    // Reaching this point means no crash occurred
 }
 
 // ============================================================================
-// 主函数
+// Main function
 // ============================================================================
 
 int main(void) {
     UNITY_BEGIN();
     
-    // 初始化测试
+    // Initialization tests
     RUN_TEST(test_context_init_success);
     RUN_TEST(test_context_init_invalid_params);
     
-    // 切换测试（Week 3 暂时跳过，Week 4 启用）
+    // Switching tests, skipped for Week 3 and enabled in Week 4
     RUN_TEST(test_context_swap_basic);
     
-    // 销毁测试
+    // Destruction tests
     RUN_TEST(test_context_destroy);
     RUN_TEST(test_context_destroy_null);
     

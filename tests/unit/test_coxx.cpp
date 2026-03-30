@@ -108,7 +108,7 @@ TEST(MutexTest, BasicLockUnlock) {
     auto worker = [&] {
         mtx.lock();
         int val = counter;
-        co_yield_now();   // attempt to interleave — blocked by mutex
+        co_yield_now();   // attempt to interleave - blocked by mutex
         counter = val + 1;
         mtx.unlock();
     };
@@ -363,5 +363,5 @@ TEST(ChannelTest, Rendezvous) {
 // static_assert check (compile-time, comment out to verify)
 // ============================================================================
 
-// The following line must NOT compile — uncomment to verify the static_assert:
+// The following line must NOT compile - uncomment to verify the static_assert:
 // co::Channel<std::string> bad_ch(1);

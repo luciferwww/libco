@@ -1,6 +1,6 @@
 /**
  * @file co_cond.h
- * @brief 协程条件变量内部结构
+ * @brief Internal coroutine condition variable structure
  */
 
 #ifndef LIBCO_CO_COND_H
@@ -13,13 +13,14 @@ extern "C" {
 #endif
 
 /**
- * @brief 协程条件变量
+ * @brief Coroutine condition variable
  * 
- * 等待队列中的协程均处于 WAITING 状态，不占用 ready_queue。
- * signal 唤醒队首一个，broadcast 唤醒全部。
+ * Coroutines in the wait queue remain in the WAITING state and do not occupy
+ * the ready_queue. signal wakes one waiter at the front, while broadcast wakes
+ * all waiters.
  */
 struct co_cond {
-    co_queue_t wait_queue;  /**< 等待此条件的协程队列（FIFO） */
+    co_queue_t wait_queue;  /**< FIFO queue of coroutines waiting on the condition */
 };
 
 #ifdef __cplusplus

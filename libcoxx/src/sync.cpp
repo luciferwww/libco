@@ -49,7 +49,7 @@ CondVar::~CondVar() {
 void CondVar::wait(std::unique_lock<Mutex>& lock) {
     // co_cond_wait() atomically releases the C-level mutex and suspends this
     // coroutine, then re-acquires the mutex before returning.
-    // The unique_lock's owns-flag stays true throughout — no unlock() needed.
+    // The unique_lock's owns-flag stays true throughout - no unlock() needed.
     co_cond_wait(cond_, lock.mutex()->native_handle());
 }
 

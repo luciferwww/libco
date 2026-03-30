@@ -6,7 +6,7 @@ message(STATUS "Building demo examples")
 # Demo Examples
 # ============================================================================
 
-# 生产者-消费者示例
+# Producer-consumer demo
 add_executable(demo_producer_consumer
     demo_producer_consumer.c
 )
@@ -22,7 +22,7 @@ target_include_directories(demo_producer_consumer
         ${CMAKE_BINARY_DIR}/include
 )
 
-# 并发协程示例
+# Concurrent coroutines demo
 add_executable(demo_concurrent
     demo_concurrent.c
 )
@@ -38,7 +38,7 @@ target_include_directories(demo_concurrent
         ${CMAKE_BINARY_DIR}/include
 )
 
-# 定时任务调度示例
+# Timer-based task scheduling demo
 add_executable(demo_scheduler
     demo_scheduler.c
 )
@@ -54,12 +54,12 @@ target_include_directories(demo_scheduler
         ${CMAKE_BINARY_DIR}/include
 )
 
-# Windows 需要额外的库
+# Windows requires an extra library
 if(WIN32)
     target_link_libraries(demo_scheduler PRIVATE winmm)
 endif()
 
-# 栈池性能测试
+# Stack pool performance demo
 add_executable(demo_stack_pool
     demo_stack_pool.c
 )
@@ -76,7 +76,7 @@ target_include_directories(demo_stack_pool
         ${CMAKE_BINARY_DIR}/include
 )
 
-# Week 7: Echo Server 示例（网络 I/O）
+# Week 7: Echo server demo (network I/O)
 add_executable(demo_echo_server
     demo_echo_server.c
 )
@@ -92,7 +92,7 @@ target_include_directories(demo_echo_server
         ${CMAKE_BINARY_DIR}/include
 )
 
-# Week 8: Echo Client 测试程序
+# Week 8: Echo client test program
 add_executable(demo_echo_client
     demo_echo_client.c
 )

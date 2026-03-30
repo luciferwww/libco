@@ -1,6 +1,6 @@
 /**
  * @file sync.hpp
- * @brief co::Mutex, co::CondVar, co::WaitGroup — C++17 wrappers for libco sync primitives.
+ * @brief co::Mutex, co::CondVar, co::WaitGroup - C++17 wrappers for libco sync primitives.
  *
  * co::Mutex satisfies the C++ named requirement BasicLockable and is compatible
  * with std::lock_guard<co::Mutex> and std::unique_lock<co::Mutex>.
@@ -29,7 +29,7 @@ namespace co {
 /**
  * @brief Cooperative mutex for coroutines.
  *
- * Satisfies BasicLockable – compatible with std::lock_guard<co::Mutex>
+ * Satisfies BasicLockable - compatible with std::lock_guard<co::Mutex>
  * and std::unique_lock<co::Mutex>.
  *
  * When lock() would block, the calling *coroutine* is suspended and yields
@@ -69,7 +69,7 @@ private:
  * wait() and wait_for() must be called from within a coroutine.
  *
  * Important: co_cond_wait() atomically releases and re-acquires the
- * underlying C mutex. The unique_lock's owns-flag remains true throughout —
+ * underlying C mutex. The unique_lock's owns-flag remains true throughout -
  * do NOT call lock.unlock() around wait().
  */
 class CondVar {

@@ -1,9 +1,10 @@
 /**
  * @file co_allocator.h
- * @brief 自定义内存分配器接口
+ * @brief Custom memory allocator interface
  * 
- * 允许用户提供自定义的内存分配函数，用于所有 libco 的内存分配。
- * 这在需要内存跟踪、自定义分配策略或内存池时非常有用。
+ * Allows users to provide custom allocation functions for all libco memory
+ * operations. This is useful for memory tracking, custom allocation
+ * strategies, or memory pools.
  */
 
 #ifndef LIBCO_ALLOCATOR_H
@@ -16,109 +17,110 @@ extern "C" {
 #endif
 
 // ============================================================================
-// 类型定义
+// Type definitions
 // ============================================================================
 
 /**
- * @brief 内存分配函数类型
+ * @brief Memory allocation function type
  * 
- * @param size 要分配的字节数
- * @param userdata 用户数据指针
- * @return 分配的内存指针，失败返回 NULL
+ * @param size Number of bytes to allocate
+ * @param userdata User data pointer
+ * @return Allocated memory pointer, or NULL on failure
  */
 typedef void *(*co_malloc_fn)(size_t size, void *userdata);
 
 /**
- * @brief 内存重新分配函数类型
+ * @brief Memory reallocation function type
  * 
- * @param ptr 原内存指针（可以为 NULL）
- * @param size 新的大小
- * @param userdata 用户数据指针
- * @return 重新分配的内存指针，失败返回 NULL
+ * @param ptr Original memory pointer, or NULL
+ * @param size New size
+ * @param userdata User data pointer
+ * @return Reallocated memory pointer, or NULL on failure
  */
 typedef void *(*co_realloc_fn)(void *ptr, size_t size, void *userdata);
 
 /**
- * @brief 内存释放函数类型
+ * @brief Memory free function type
  * 
- * @param ptr 要释放的内存指针
- * @param userdata 用户数据指针
+ * @param ptr Memory pointer to free
+ * @param userdata User data pointer
  */
 typedef void (*co_free_fn)(void *ptr, void *userdata);
 
 /**
- * @brief 自定义分配器结构
+ * @brief Custom allocator structure
  */
 typedef struct co_allocator {
-    co_malloc_fn malloc_fn;     /**< 分配函数 */
-    co_realloc_fn realloc_fn;   /**< 重新分配函数 */
-    co_free_fn free_fn;         /**< 释放函数 */
-    void *userdata;             /**< 用户数据指针 */
+    co_malloc_fn malloc_fn;     /**< Allocation function */
+    co_realloc_fn realloc_fn;   /**< Reallocation function */
+    co_free_fn free_fn;         /**< Free function */
+    void *userdata;             /**< User data pointer */
 } co_allocator_t;
 
 // ============================================================================
-// 分配器管理
+// Allocator management
 // ============================================================================
 
 /**
- * @brief 设置全局分配器
+ * @brief Set the global allocator
  * 
- * 必须在创建任何 libco 对象之前调用。
- * 如果不调用此函数，libco 将使用标准的 malloc/realloc/free。
+ * This must be called before creating any libco objects.
+ * If not called, libco uses the standard malloc/realloc/free functions.
  * 
- * @param allocator 自定义分配器指针（可以为 NULL 以恢复默认分配器）
+ * @param allocator Custom allocator pointer, or NULL to restore the default
+ *        allocator
  */
 void co_set_allocator(const co_allocator_t *allocator);
 
 /**
- * @brief 获取当前全局分配器
+ * @brief Get the current global allocator
  * 
- * @return 当前分配器指针（如果使用默认分配器则返回 NULL）
+ * @return Current allocator pointer, or NULL when using the default allocator
  */
 const co_allocator_t *co_get_allocator(void);
 
 // ============================================================================
-// 内部分配函数（供 libco 内部使用）
+// Internal allocation helpers for libco
 // ============================================================================
 
 /**
- * @brief 内部分配函数
+ * @brief Internal allocation function
  * 
- * 使用当前设置的分配器分配内存。
+ * Allocate memory using the currently configured allocator.
  * 
- * @param size 要分配的字节数
- * @return 分配的内存指针，失败返回 NULL
+ * @param size Number of bytes to allocate
+ * @return Allocated memory pointer, or NULL on failure
  */
 void *co_malloc(size_t size);
 
 /**
- * @brief 内部分配并清零函数
+ * @brief Internal allocate-and-zero function
  * 
- * 使用当前设置的分配器分配内存并清零。
+ * Allocate memory using the current allocator and zero-initialize it.
  * 
- * @param count 元素数量
- * @param size 每个元素的大小
- * @return 分配的内存指针，失败返回 NULL
+ * @param count Number of elements
+ * @param size Size of each element
+ * @return Allocated memory pointer, or NULL on failure
  */
 void *co_calloc(size_t count, size_t size);
 
 /**
- * @brief 内部重新分配函数
+ * @brief Internal reallocation function
  * 
- * 使用当前设置的分配器重新分配内存。
+ * Reallocate memory using the current allocator.
  * 
- * @param ptr 原内存指针
- * @param size 新的大小
- * @return 重新分配的内存指针，失败返回 NULL
+ * @param ptr Original memory pointer
+ * @param size New size
+ * @return Reallocated memory pointer, or NULL on failure
  */
 void *co_realloc(void *ptr, size_t size);
 
 /**
- * @brief 内部释放函数
+ * @brief Internal free function
  * 
- * 使用当前设置的分配器释放内存。
+ * Free memory using the current allocator.
  * 
- * @param ptr 要释放的内存指针
+ * @param ptr Memory pointer to free
  */
 void co_free(void *ptr);
 

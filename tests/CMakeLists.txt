@@ -22,6 +22,9 @@ if(TARGET unity AND MSVC)
         /wd4711        # 自动内联展开
         /wd5045        # Spectre缓解
     )
+    target_compile_definitions(unity PUBLIC
+        UNITY_SUPPORT_64
+    )
 endif()
 
 # ============================================================================

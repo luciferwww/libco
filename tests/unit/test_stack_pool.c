@@ -1,8 +1,8 @@
 /**
  * @file test_stack_pool.c
- * @brief 栈池单元测试
+ * @brief Stack pool unit tests
  * 
- * 测试栈池的分配、释放和缓存功能。
+ * Tests stack pool allocation, release, and caching behavior.
  */
 
 #include "unity.h"
@@ -12,23 +12,23 @@
 #include <string.h>
 
 // ============================================================================
-// 测试辅助
+// Test helpers
 // ============================================================================
 
 void setUp(void) {
-    // 每个测试前的初始化
+    // Per-test initialization
 }
 
 void tearDown(void) {
-    // 每个测试后的清理
+    // Per-test cleanup
 }
 
 // ============================================================================
-// 栈池创建和销毁测试
+// Stack pool creation and destruction tests
 // ============================================================================
 
 /**
- * @brief 测试栈池创建和销毁
+ * @brief Test stack pool creation and destruction
  */
 void test_stack_pool_create_destroy(void) {
     co_stack_pool_t *pool = co_stack_pool_create(128 * 1024, 10);
@@ -42,7 +42,7 @@ void test_stack_pool_create_destroy(void) {
 }
 
 /**
- * @brief 测试创建零容量栈池
+ * @brief Test creating a zero-capacity stack pool
  */
 void test_stack_pool_zero_capacity(void) {
     co_stack_pool_t *pool = co_stack_pool_create(64 * 1024, 0);
@@ -55,7 +55,7 @@ void test_stack_pool_zero_capacity(void) {
 }
 
 /**
- * @brief 测试创建无效参数
+ * @brief Test invalid creation parameters
  */
 void test_stack_pool_invalid_params(void) {
     co_stack_pool_t *pool = co_stack_pool_create(0, 10);
@@ -63,34 +63,34 @@ void test_stack_pool_invalid_params(void) {
 }
 
 // ============================================================================
-// 栈分配和释放测试
+// Stack allocation and release tests
 // ============================================================================
 
 /**
- * @brief 测试单个栈分配和释放
+ * @brief Test allocating and freeing a single stack
  */
 void test_stack_pool_alloc_free(void) {
     co_stack_pool_t *pool = co_stack_pool_create(128 * 1024, 10);
     TEST_ASSERT_NOT_NULL(pool);
     
-    // 分配栈
+    // Allocate a stack
     void *stack = co_stack_pool_alloc(pool);
     TEST_ASSERT_NOT_NULL(stack);
     
-    // 验证可以写入该栈
+    // Verify the stack is writable
     memset(stack, 0xAA, 1024);
     
-    // 释放栈
+    // Free the stack
     co_stack_pool_free(pool, stack);
     
-    // 验证栈被缓存
+    // Verify that the stack was cached
     TEST_ASSERT_EQUAL_UINT(1, co_stack_pool_available(pool));
     
     co_stack_pool_destroy(pool);
 }
 
 /**
- * @brief 测试多个栈分配和释放
+ * @brief Test allocating and freeing multiple stacks
  */
 void test_stack_pool_multiple_alloc_free(void) {
     const size_t count = 5;
@@ -100,18 +100,18 @@ void test_stack_pool_multiple_alloc_free(void) {
     void **stacks = (void **)malloc(count * sizeof(void *));
     TEST_ASSERT_NOT_NULL(stacks);
     
-    // 分配多个栈
+    // Allocate multiple stacks
     for (size_t i = 0; i < count; i++) {
         stacks[i] = co_stack_pool_alloc(pool);
         TEST_ASSERT_NOT_NULL(stacks[i]);
     }
     
-    // 释放所有栈
+    // Free all stacks
     for (size_t i = 0; i < count; i++) {
         co_stack_pool_free(pool, stacks[i]);
     }
     
-    // 验证所有栈被缓存
+    // Verify that all stacks were cached
     TEST_ASSERT_EQUAL_UINT(count, co_stack_pool_available(pool));
     
     free(stacks);
@@ -119,26 +119,26 @@ void test_stack_pool_multiple_alloc_free(void) {
 }
 
 /**
- * @brief 测试栈重用
+ * @brief Test stack reuse
  */
 void test_stack_pool_reuse(void) {
     co_stack_pool_t *pool = co_stack_pool_create(64 * 1024, 10);
     TEST_ASSERT_NOT_NULL(pool);
     
-    // 第一次分配
+    // First allocation
     void *stack1 = co_stack_pool_alloc(pool);
     TEST_ASSERT_NOT_NULL(stack1);
     
-    // 释放
+    // Free it
     co_stack_pool_free(pool, stack1);
     TEST_ASSERT_EQUAL_UINT(1, co_stack_pool_available(pool));
     
-    // 再次分配应该得到相同的栈
+    // The next allocation should reuse the same stack
     void *stack2 = co_stack_pool_alloc(pool);
     TEST_ASSERT_NOT_NULL(stack2);
     TEST_ASSERT_EQUAL_PTR(stack1, stack2);
     
-    // 验证池现在为空
+    // Verify that the pool is empty again
     TEST_ASSERT_EQUAL_UINT(0, co_stack_pool_available(pool));
     
     co_stack_pool_free(pool, stack2);
@@ -146,7 +146,7 @@ void test_stack_pool_reuse(void) {
 }
 
 /**
- * @brief 测试超过容量后直接释放
+ * @brief Test direct release after exceeding capacity
  */
 void test_stack_pool_overflow(void) {
     const size_t capacity = 3;
@@ -156,18 +156,18 @@ void test_stack_pool_overflow(void) {
     void **stacks = (void **)malloc((capacity + 2) * sizeof(void *));
     TEST_ASSERT_NOT_NULL(stacks);
     
-    // 分配比容量更多的栈
+    // Allocate more stacks than the pool capacity
     for (size_t i = 0; i < capacity + 2; i++) {
         stacks[i] = co_stack_pool_alloc(pool);
         TEST_ASSERT_NOT_NULL(stacks[i]);
     }
     
-    // 释放所有栈
+    // Free all stacks
     for (size_t i = 0; i < capacity + 2; i++) {
         co_stack_pool_free(pool, stacks[i]);
     }
     
-    // 验证只缓存了容量范围内的栈
+    // Verify that only capacity-limited stacks were cached
     TEST_ASSERT_EQUAL_UINT(capacity, co_stack_pool_available(pool));
     
     free(stacks);
@@ -175,11 +175,11 @@ void test_stack_pool_overflow(void) {
 }
 
 // ============================================================================
-// 统计信息测试
+// Statistics tests
 // ============================================================================
 
 /**
- * @brief 测试统计信息
+ * @brief Test statistics reporting
  */
 void test_stack_pool_stats(void) {
     co_stack_pool_t *pool = co_stack_pool_create(64 * 1024, 10);
@@ -194,17 +194,17 @@ void test_stack_pool_stats(void) {
     TEST_ASSERT_EQUAL_UINT(0, stats.cache_misses);
     TEST_ASSERT_EQUAL_UINT(0, stats.current_used);
     
-    // 分配3个栈
+    // Allocate three stacks
     void *s1 = co_stack_pool_alloc(pool);
     void *s2 = co_stack_pool_alloc(pool);
     void *s3 = co_stack_pool_alloc(pool);
     
     co_stack_pool_get_stats(pool, &stats);
     TEST_ASSERT_EQUAL_UINT(3, stats.total_allocs);
-    TEST_ASSERT_EQUAL_UINT(3, stats.cache_misses);  // 池为空，全部未命中
+    TEST_ASSERT_EQUAL_UINT(3, stats.cache_misses);  // The pool is empty, so all accesses miss
     TEST_ASSERT_EQUAL_UINT(3, stats.current_used);
     
-    // 释放2个
+    // Free two stacks
     co_stack_pool_free(pool, s1);
     co_stack_pool_free(pool, s2);
     
@@ -212,12 +212,12 @@ void test_stack_pool_stats(void) {
     TEST_ASSERT_EQUAL_UINT(2, stats.total_frees);
     TEST_ASSERT_EQUAL_UINT(1, stats.current_used);
     
-    // 再分配1个（应该命中缓存）
+    // Allocate one more stack; this should hit the cache
     void *s4 = co_stack_pool_alloc(pool);
     
     co_stack_pool_get_stats(pool, &stats);
     TEST_ASSERT_EQUAL_UINT(4, stats.total_allocs);
-    TEST_ASSERT_EQUAL_UINT(1, stats.cache_hits);    // 命中1次
+    TEST_ASSERT_EQUAL_UINT(1, stats.cache_hits);    // One cache hit
     TEST_ASSERT_EQUAL_UINT(3, stats.cache_misses);
     TEST_ASSERT_EQUAL_UINT(2, stats.current_used);
     
@@ -227,24 +227,24 @@ void test_stack_pool_stats(void) {
 }
 
 /**
- * @brief 测试重置统计信息
+ * @brief Test resetting statistics
  */
 void test_stack_pool_reset_stats(void) {
     co_stack_pool_t *pool = co_stack_pool_create(64 * 1024, 10);
     TEST_ASSERT_NOT_NULL(pool);
     
-    // 进行一些操作
+    // Perform a few operations
     void *s1 = co_stack_pool_alloc(pool);
     void *s2 = co_stack_pool_alloc(pool);
     co_stack_pool_free(pool, s1);
     
-    // 重置统计
+    // Reset statistics
     co_stack_pool_reset_stats(pool);
     
     co_stack_pool_stats_t stats;
     co_stack_pool_get_stats(pool, &stats);
     
-    // total_allocs等应该被清零，但 current_used 应该保留
+    // total_allocs and similar counters should reset, while current_used stays unchanged
     TEST_ASSERT_EQUAL_UINT(0, stats.total_allocs);
     TEST_ASSERT_EQUAL_UINT(0, stats.total_frees);
     TEST_ASSERT_EQUAL_UINT(0, stats.cache_hits);
@@ -256,24 +256,24 @@ void test_stack_pool_reset_stats(void) {
 }
 
 // ============================================================================
-// 主函数
+// Main function
 // ============================================================================
 
 int main(void) {
     UNITY_BEGIN();
     
-    // 创建和销毁
+    // Creation and destruction
     RUN_TEST(test_stack_pool_create_destroy);
     RUN_TEST(test_stack_pool_zero_capacity);
     RUN_TEST(test_stack_pool_invalid_params);
     
-    // 分配和释放
+    // Allocation and release
     RUN_TEST(test_stack_pool_alloc_free);
     RUN_TEST(test_stack_pool_multiple_alloc_free);
     RUN_TEST(test_stack_pool_reuse);
     RUN_TEST(test_stack_pool_overflow);
     
-    // 统计信息
+    // Statistics
     RUN_TEST(test_stack_pool_stats);
     RUN_TEST(test_stack_pool_reset_stats);
     
