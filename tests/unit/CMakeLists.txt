@@ -253,6 +253,32 @@ target_include_directories(test_channel
 
 add_test(NAME test_channel COMMAND test_channel)
 
+# IOCP 超时测试 - C (Windows)
+# 在非 Windows 平台，测试入口的 main() 会打印"跳过"后直接退出（返回 0），
+# 因此可跨平台注册而不会在 Linux/macOS 上失败。
+add_executable(test_iocp_timeout
+    test_iocp_timeout.c
+)
+
+target_link_libraries(test_iocp_timeout
+    PRIVATE
+        unity
+        co_static
+)
+
+target_include_directories(test_iocp_timeout
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/libco/include
+        ${CMAKE_SOURCE_DIR}/libco/src
+        ${CMAKE_BINARY_DIR}/include
+)
+
+if(WIN32)
+    target_link_libraries(test_iocp_timeout PRIVATE ws2_32)
+endif()
+
+add_test(NAME test_iocp_timeout COMMAND test_iocp_timeout)
+
 # ============================================================================
 # Google Test discovery (自动发现测试)
 # ============================================================================

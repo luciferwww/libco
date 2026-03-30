@@ -428,18 +428,22 @@ static co_error_t co_wait_io_async(co_socket_t fd, co_io_op_t op_type,
         return CO_ERROR_INVAL;
     }
     
-    // 初始化超时状态（Windows IOCP 超时完整实现见下方说明）
+    // 初始化超时状态
     current->timed_out = false;
     current->io_waiting = false;
-    // TODO(Windows I/O 超时): IOCP 超时比 epoll 复杂得多，需要以下步骤：
-    //   1. 将协程注册到定时器堆（wakeup_time = now + timeout_ms，io_waiting = true）
-    //   2. 定时器触发时：调度器的 timer handler 设置 timed_out = true 并唤醒协程
-    //   3. 协程在 co_wait_io_async 中检测到 timed_out：
-    //      a. 调用 CancelIoEx((HANDLE)fd, &wait_ctx.overlapped) 请求取消未完成的异步 I/O
-    //      b. 做第二次 co_context_swap 等待 IOCP 投递取消完成包（ERROR_OPERATION_ABORTED）
-    //         （此步骤至关重要：wait_ctx 是栈上变量，IOCP 必须完成对它的访问才能安全返回）
-    //      c. 第二次恢复后返回 CO_ERROR_TIMEOUT
-    //   当前行为：timeout_ms 被忽略，co_wait_io_async 无限等待直到 I/O 完成。
+
+    // 注册超时定时器（如果有超时限制）
+    // 调度器的 timer handler 在定时器触发时会设置：
+    //   timed_out = true, io_waiting = false, waiting_io_count--
+    // 并将协程加入 ready_queue，从第一次 co_context_swap 恢复。
+    if (timeout_ms >= 0) {
+        current->wakeup_time = co_get_monotonic_time_ms() + (uint64_t)timeout_ms;
+        current->io_waiting = true;
+        if (!co_timer_heap_push(&sched->timer_heap, current)) {
+            current->io_waiting = false;
+            return CO_ERROR_NOMEM;
+        }
+    }
 
     // 创建等待上下文
     co_io_wait_ctx_t wait_ctx;
@@ -453,6 +457,7 @@ static co_error_t co_wait_io_async(co_socket_t fd, co_io_op_t op_type,
     
     // 关联到 IOCP（如果尚未关联）
     if (co_iomux_add(sched->iomux, &wait_ctx) != CO_OK) {
+        current->io_waiting = false;  // timer 已入堆，清零让 timer handler 自动跳过
         return CO_ERROR_PLATFORM;
     }
     
@@ -509,11 +514,40 @@ static co_error_t co_wait_io_async(co_socket_t fd, co_io_op_t op_type,
     current->state = CO_STATE_WAITING;
     sched->waiting_io_count++;
     
-    // 直接切换回调度器，等待 IOCP 完成事件唤醒
+    // 第一次 swap：直接切换回调度器，等待 IOCP 完成事件或超时触发
     // 注意：不能用 co_yield()，因为它会将协程重新加入就绪队列
     co_context_swap(&current->context, &sched->main_ctx);
     
-    // 恢复执行时，I/O 已完成
+    // -----------------------------------------------------------------------
+    // 超时路径
+    // -----------------------------------------------------------------------
+    // 调度器的 timer handler 触发时：
+    //   设置 timed_out=true、io_waiting=false，减少 waiting_io_count，
+    //   并将协程加入 ready_queue（状态变为 READY）。
+    // 此时 IOCP 操作仍挂起（WSARecv/WSASend 尚未完成），必须取消它，
+    // 然后做第二次 co_context_swap 等待取消完成包，以确保栈上的
+    // wait_ctx（内嵌 OVERLAPPED）在 IOCP 完成对它的最后一次访问之前
+    // 不会随栈帧销毁。
+    if (current->timed_out) {
+        // 请求取消：对 fd 上指定的 OVERLAPPED 操作发起取消。
+        // - 成功：IOCP 稍后投递 STATUS_CANCELLED (ERROR_OPERATION_ABORTED) 完成包。
+        // - ERROR_NOT_FOUND：操作已在内核侧完成，完成包尚在 IOCP 队列中未被
+        //   iomux_poll 处理（单线程模型保证了这一点）。IOCP 仍将投递该完成包。
+        // 无论哪种情况，都必须做第二次 swap 等待完成包。
+        CancelIoEx((HANDLE)fd, &wait_ctx.overlapped);
+
+        current->state = CO_STATE_WAITING;
+        sched->waiting_io_count++;
+        co_context_swap(&current->context, &sched->main_ctx);
+
+        // 第二次恢复：IOCP 已投递完成包（STATUS_CANCELLED 或竞态正常完成），
+        // wait_ctx 已安全，栈帧可以释放。
+        return CO_ERROR_TIMEOUT;
+    }
+
+    // -----------------------------------------------------------------------
+    // 正常完成路径
+    // -----------------------------------------------------------------------
     if (wait_ctx.revents & CO_IO_ERROR) {
         return CO_ERROR;
     }
