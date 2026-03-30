@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <stdio.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -28,8 +29,21 @@
 // Thread-local storage
 // ============================================================================
 
-// Scheduler for the current thread
-static _Thread_local co_scheduler_t *g_current_scheduler = NULL;
+// Thread-local scheduler for the current thread.
+// Each thread can have its own independent scheduler instance.
+// This enables multi-threaded coroutine execution without race conditions.
+#if defined(_MSC_VER)
+    // MSVC uses __declspec(thread)
+    static __declspec(thread) co_scheduler_t *tls_current_scheduler = NULL;
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+    // C11 standard thread-local storage
+    static _Thread_local co_scheduler_t *tls_current_scheduler = NULL;
+#elif defined(__GNUC__) || defined(__clang__)
+    // GCC/Clang extension
+    static __thread co_scheduler_t *tls_current_scheduler = NULL;
+#else
+    #error "Thread-local storage not supported on this platform"
+#endif
 
 // ============================================================================
 // Scheduler creation and destruction
@@ -139,8 +153,8 @@ co_error_t co_scheduler_run(co_scheduler_t *sched) {
         return CO_ERROR;  // Already running
     }
     
-    // Set as the current scheduler
-    g_current_scheduler = sched;
+    // Set as the current thread-local scheduler
+    tls_current_scheduler = sched;
     sched->running = true;
     sched->should_stop = false;
     
@@ -212,13 +226,13 @@ co_error_t co_scheduler_run(co_scheduler_t *sched) {
         co_error_t err = co_scheduler_schedule(sched);
         if (err != CO_OK) {
             sched->running = false;
-            g_current_scheduler = NULL;
+            tls_current_scheduler = NULL;
             return err;
         }
     }
     
     sched->running = false;
-    g_current_scheduler = NULL;
+    tls_current_scheduler = NULL;
     
     return CO_OK;
 }
@@ -301,11 +315,11 @@ co_routine_t *co_scheduler_dequeue(co_scheduler_t *sched) {
 // ============================================================================
 
 co_scheduler_t *co_current_scheduler(void) {
-    return g_current_scheduler;
+    return tls_current_scheduler;
 }
 
 co_routine_t *co_current(void) {
-    co_scheduler_t *sched = g_current_scheduler;
+    co_scheduler_t *sched = tls_current_scheduler;
     return sched ? sched->current : NULL;
 }
 
